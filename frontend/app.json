@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "Manu's Resto Manager",
+    "slug": "manus-resto-manager",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "manusresto",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#1E3A2B",
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      "expo-font"
+    ],
+    "android": {
+      "package": "com.manusresto.manager"
+    },
+    "ios": {
+      "bundleIdentifier": "com.manusresto.manager"
+    }
+  }
+}

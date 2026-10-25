@@ -4,11 +4,14 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
+import { useContext } from 'react';
+import { RefreshContext } from './AppNavigation';
 import { colors, radius } from '../theme';
 import { fcfa } from '../utils';
 
 // Loads data whenever the screen gains focus; returns [data, reload].
 export function useLoad(loader, deps = []) {
+  const { registerRefresh, unregisterRefresh } = useContext(RefreshContext);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const run = useCallback(async () => {
@@ -25,8 +28,10 @@ export function useLoad(loader, deps = []) {
   }, deps);
   useFocusEffect(
     useCallback(() => {
+      registerRefresh(run);
       run();
-    }, [run])
+      return () => unregisterRefresh(run);
+    }, [run, registerRefresh, unregisterRefresh])
   );
   return [data, run, loading];
 }

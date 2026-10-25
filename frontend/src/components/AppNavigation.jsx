@@ -1,11 +1,45 @@
 import React from 'react';
-import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, radius } from '../theme';
 
 export const DrawerContext = React.createContext(() => {});
+export const RefreshContext = React.createContext({
+  registerRefresh: () => {},
+  unregisterRefresh: () => {},
+  refresh: async () => {},
+  refreshing: false,
+  canRefresh: false,
+});
+
+export function RefreshProvider({ children }) {
+  const [handler, setHandler] = React.useState(null);
+  const [refreshing, setRefreshing] = React.useState(false);
+
+  const registerRefresh = React.useCallback((nextHandler) => {
+    setHandler(() => nextHandler);
+  }, []);
+  const unregisterRefresh = React.useCallback((currentHandler) => {
+    setHandler((activeHandler) => (activeHandler === currentHandler ? null : activeHandler));
+  }, []);
+  const refresh = React.useCallback(async () => {
+    if (!handler || refreshing) return;
+    setRefreshing(true);
+    try {
+      await handler();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [handler, refreshing]);
+
+  return (
+    <RefreshContext.Provider value={{ registerRefresh, unregisterRefresh, refresh, refreshing, canRefresh: Boolean(handler) }}>
+      {children}
+    </RefreshContext.Provider>
+  );
+}
 
 const LINKS = [
   { label: 'Home', path: '/', icon: 'home-outline' },
@@ -35,6 +69,26 @@ export function MenuButton({ onPress }) {
       style={s.menuButton}
     >
       <Ionicons name="menu" size={25} color="#fff" />
+    </Pressable>
+  );
+}
+
+export function RefreshButton() {
+  const { refresh, refreshing, canRefresh } = React.useContext(RefreshContext);
+
+  return (
+    <Pressable
+      onPress={refresh}
+      disabled={!canRefresh || refreshing}
+      accessibilityRole="button"
+      accessibilityLabel="Refresh data"
+      accessibilityState={{ disabled: !canRefresh || refreshing, busy: refreshing }}
+      hitSlop={10}
+      style={s.refreshButton}
+    >
+      {refreshing
+        ? <ActivityIndicator size="small" color="#fff" />
+        : <Ionicons name="refresh" size={22} color={canRefresh ? '#fff' : 'rgba(255,255,255,0.5)'} />}
     </Pressable>
   );
 }
@@ -120,4 +174,5 @@ const s = StyleSheet.create({
   headerLogo: { width: 34, height: 34 },
   headerName: { color: '#fff', fontSize: 16, fontWeight: '800' },
   menuButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
+  refreshButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
 });

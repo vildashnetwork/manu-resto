@@ -34,6 +34,7 @@ export default function Stock() {
   const [imageUrl, setImageUrl] = useState('');
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
+  const [outOfStockOnly, setOutOfStockOnly] = useState(false);
   const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
   const [barcodeScanAction, setBarcodeScanAction] = useState('assign');
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -166,9 +167,11 @@ export default function Stock() {
   const categories = useMemo(() => ['All', ...Array.from(new Set(allProducts.map((p) => p.category)))], [allProducts]);
   const list = allProducts.filter((p) =>
     (category === 'All' || p.category === category) &&
+    (!outOfStockOnly || (p.tracked && p.stock <= 0)) &&
     (p.name + ' ' + (p.barcode || '')).toLowerCase().includes(search.trim().toLowerCase())
   );
   const tracked = allProducts.filter((p) => p.tracked);
+  const outOfStockCount = tracked.filter((p) => p.stock <= 0).length;
   const lowCount = tracked.filter((p) => p.low_stock_threshold > 0 && p.stock <= p.low_stock_threshold).length;
 
   if (loading && !products) return <ScreenShimmer variant="list" />;
@@ -203,6 +206,14 @@ export default function Stock() {
             {categories.map((c) => (
               <Chip key={c} label={c} icon={c === 'All' ? 'apps-outline' : CATEGORY_ICONS[c] || 'pricetag-outline'} active={category === c} onPress={() => setCategory(c)} />
             ))}
+          </ScrollView>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 6 }}>
+            <Chip
+              label={`Out of stock · ${outOfStockCount}`}
+              icon="alert-circle-outline"
+              active={outOfStockOnly}
+              onPress={() => setOutOfStockOnly((current) => !current)}
+            />
           </ScrollView>
 
           {list.map((p) => {
@@ -246,7 +257,13 @@ export default function Stock() {
             );
           })}
           {list.length === 0 && (
-            <Card><Empty icon="cube-outline" title="No products found" hint="Tap + Product to add a food or drink." /></Card>
+            <Card>
+              <Empty
+                icon={outOfStockOnly ? 'checkmark-circle-outline' : 'cube-outline'}
+                title={outOfStockOnly ? 'No out-of-stock products' : 'No products found'}
+                hint={outOfStockOnly ? 'All tracked products currently have stock.' : 'Tap + Product to add a food or drink.'}
+              />
+            </Card>
           )}
         </View>
       </ScrollView>

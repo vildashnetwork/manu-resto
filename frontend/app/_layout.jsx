@@ -4,7 +4,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Btn } from '../src/components/ui';
-import { AppDrawer, DrawerContext, HeaderBrandTitle, MenuButton } from '../src/components/AppNavigation';
+import { AppDrawer, DrawerContext, HeaderBrandTitle, MenuButton, RefreshButton, RefreshProvider } from '../src/components/AppNavigation';
 import { colors } from '../src/theme';
 
 export default function RootLayout() {
@@ -59,36 +59,40 @@ export default function RootLayout() {
   return (
     <>
       <StatusBar style="light" />
-      <DrawerContext.Provider value={() => setDrawerOpen(true)}>
-        <Stack
-          screenOptions={{
-            headerStyle: { backgroundColor: colors.forest },
-            headerTintColor: '#fff',
-            headerTitleStyle: { fontWeight: '700' },
-            contentStyle: { backgroundColor: colors.cream },
-          }}
-        >
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="customer/[id]"
-            options={{
-              headerTitle: () => <HeaderBrandTitle />,
-              headerTitleAlign: 'left',
-              headerLeft: () => <MenuButton onPress={() => setDrawerOpen(true)} />,
+      <RefreshProvider>
+        <DrawerContext.Provider value={() => setDrawerOpen(true)}>
+          <Stack
+            screenOptions={{
+              headerStyle: { backgroundColor: colors.forest },
+              headerTintColor: '#fff',
+              headerTitleStyle: { fontWeight: '700' },
+              contentStyle: { backgroundColor: colors.cream },
             }}
-          />
-          <Stack.Screen
-            name="settings"
-            options={{
-              title: 'Settings',
-              headerTitle: () => <HeaderBrandTitle />,
-              headerTitleAlign: 'left',
-              headerLeft: () => <MenuButton onPress={() => setDrawerOpen(true)} />,
-            }}
-          />
-        </Stack>
-        <AppDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
-      </DrawerContext.Provider>
+          >
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="customer/[id]"
+              options={{
+                headerTitle: () => <HeaderBrandTitle />,
+                headerTitleAlign: 'left',
+                headerLeft: () => <MenuButton onPress={() => setDrawerOpen(true)} />,
+                headerRight: () => <RefreshButton />,
+              }}
+            />
+            <Stack.Screen
+              name="settings"
+              options={{
+                title: 'Settings',
+                headerTitle: () => <HeaderBrandTitle />,
+                headerTitleAlign: 'left',
+                headerLeft: () => <MenuButton onPress={() => setDrawerOpen(true)} />,
+                headerRight: () => <RefreshButton />,
+              }}
+            />
+          </Stack>
+          <AppDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
+        </DrawerContext.Provider>
+      </RefreshProvider>
       {locked && Platform.OS !== 'web' && (
         <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.forest, justifyContent: 'center', padding: 28 }}>
           <Image

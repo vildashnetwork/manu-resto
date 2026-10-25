@@ -2,36 +2,25 @@ import { Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from '../config/cloudinary';
+import { getAppMode } from '../db';
+import { uid } from '../utils';
 
-export async function chooseAndUploadProductImage() {
-  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) throw new Error('Allow photo library access to add a product image.');
-
-  const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    allowsEditing: true,
-    aspect: [4, 3],
-    quality: 0.85,
-  });
-  if (result.canceled) return null;
-
-  const asset = result.assets?.[0];
-  if (!asset?.uri) throw new Error('The selected image could not be read.');
-
+export async function uploadProductImage(uri, fileName = 'product-image.jpg', mimeType = 'image/jpeg') {
+  if (!uri) throw new Error('The selected image could not be read.');
   const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
   let response;
   if (Platform.OS === 'web') {
     const form = new FormData();
-    const file = await fetch(asset.uri).then((response) => response.blob());
-    form.append('file', file, asset.fileName || 'product-image.jpg');
+    const file = await fetch(uri).then((result) => result.blob());
+    form.append('file', file, fileName);
     form.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
     response = await fetch(uploadUrl, { method: 'POST', body: form });
   } else {
-    const result = await FileSystem.uploadAsync(uploadUrl, asset.uri, {
+    const result = await FileSystem.uploadAsync(uploadUrl, uri, {
       httpMethod: 'POST',
       uploadType: FileSystem.FileSystemUploadType.MULTIPART,
       fieldName: 'file',
-      mimeType: asset.mimeType || 'image/jpeg',
+      mimeType,
       parameters: { upload_preset: CLOUDINARY_UPLOAD_PRESET },
     });
     response = {
@@ -49,4 +38,29 @@ export async function chooseAndUploadProductImage() {
     throw new Error(payload.error?.message || 'Image upload failed. Check the Cloudinary cloud name and unsigned preset.');
   }
   return payload.secure_url;
+}
+
+export async function chooseAndUploadProductImage() {
+  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!permission.granted) throw new Error('Allow photo library access to add a product image.');
+
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    allowsEditing: true,
+    aspect: [4, 3],
+    quality: 0.85,
+  });
+  if (result.canceled) return null;
+
+  const asset = result.assets?.[0];
+  if (!asset?.uri) throw new Error('The selected image could not be read.');
+  if (Platform.OS !== 'web' && FileSystem.documentDirectory) {
+    const directory = `${FileSystem.documentDirectory}product-images/`;
+    await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+    const localUri = `${directory}${uid()}.${asset.fileName?.split('.').pop() || 'jpg'}`;
+    await FileSystem.copyAsync({ from: asset.uri, to: localUri });
+    if (await getAppMode() === 'offline') return localUri;
+    return uploadProductImage(localUri, asset.fileName || 'product-image.jpg', asset.mimeType || 'image/jpeg');
+  }
+  return uploadProductImage(asset.uri, asset.fileName || 'product-image.jpg', asset.mimeType || 'image/jpeg');
 }

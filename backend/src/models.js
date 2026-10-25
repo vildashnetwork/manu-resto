@@ -15,8 +15,10 @@ const productSchema = new Schema({
   stock: { type: Number, default: 0, min: 0 },
   imageUrl: { type: String, required: true },
   active: { type: Boolean, default: true },
+  syncKey: { type: String, default: null },
   created_at: { type: Number, default: Date.now },
 }, options);
+productSchema.index({ syncKey: 1 }, { unique: true, partialFilterExpression: { syncKey: { $type: 'string' } } });
 
 const customerSchema = new Schema({
   name: { type: String, required: true, trim: true },
@@ -25,9 +27,11 @@ const customerSchema = new Schema({
   creditLimit: { type: Number, default: 0, min: 0 },
   balance: { type: Number, default: 0 },
   notes: { type: String, default: null },
+  syncKey: { type: String, default: null },
   active: { type: Boolean, default: true },
   created_at: { type: Number, default: Date.now },
 }, options);
+customerSchema.index({ syncKey: 1 }, { unique: true, partialFilterExpression: { syncKey: { $type: 'string' } } });
 
 const stockMovementSchema = new Schema({
   productId: { type: Schema.Types.ObjectId, ref: 'Product', required: true, index: true },
@@ -35,8 +39,10 @@ const stockMovementSchema = new Schema({
   qty: { type: Number, required: true },
   note: { type: String, default: null },
   refId: { type: String, default: null },
+  idempotencyKey: { type: String, default: null },
   created_at: { type: Number, default: Date.now, index: true },
 }, options);
+stockMovementSchema.index({ idempotencyKey: 1 }, { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } });
 
 const saleItemSchema = new Schema({
   productId: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
@@ -96,8 +102,10 @@ const expenseSchema = new Schema({
   amount: { type: Number, required: true, min: 1 },
   method: { type: String, required: true },
   note: { type: String, default: null },
+  idempotencyKey: { type: String, default: null },
   created_at: { type: Number, default: Date.now, index: true },
 }, options);
+expenseSchema.index({ idempotencyKey: 1 }, { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } });
 
 const settingSchema = new Schema({
   _id: { type: String, default: 'main' },

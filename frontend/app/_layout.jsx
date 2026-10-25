@@ -86,6 +86,15 @@ export default function RootLayout() {
               headerLeft: () => <MenuButton onPress={() => setDrawerOpen(true)} />,
             }}
           />
+          <Stack.Screen
+            name="sync"
+            options={{
+              title: 'Sync progress',
+              headerTitle: () => <HeaderBrandTitle />,
+              headerTitleAlign: 'left',
+              headerLeft: () => <MenuButton onPress={() => setDrawerOpen(true)} />,
+            }}
+          />
         </Stack>
         <AppDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
       </DrawerContext.Provider>

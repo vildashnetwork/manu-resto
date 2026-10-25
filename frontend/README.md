@@ -37,6 +37,14 @@ List responses may be a raw array or an object keyed by the resource name (or `d
 
 The matching Express/MongoDB backend now lives in `../backend`; see its README for startup, MongoDB transaction requirements, and deployment configuration. The app does not connect to MongoDB directly; database credentials stay on the server.
 
+## Offline mode and synchronization
+
+The Settings page offers Online and Offline modes. Before the first offline session, choose **Sync data and prepare offline** while connected. This downloads products, customers, account history, sales, expenses, and product images into the device's SQLite database and app storage. Offline sales, customer repayments and records, stock changes, expenses, product images, and settings are saved locally.
+
+Switching back to Online starts a background synchronization. The Sync progress page displays the current stage, percentage, pending and failed records, and allows a retry. Sync is user-triggered; the app does not automatically retry when network connectivity changes. Local transaction identifiers are used as idempotency keys to prevent duplicate uploads. For records changed independently on the server, the latest server values are used when the snapshot is downloaded; local queued transactions are retained and uploaded.
+
+Offline data is stored on the device and is not a substitute for a server backup. The API currently has no user authentication, so do not expose it publicly without adding authorization.
+
 ## Product images
 
 New food and drink products require a selected image. The app uploads it directly to Cloudinary using an unsigned preset, then saves the resulting secure URL with the product through the API. The defaults use the cloud name and preset supplied for this project. To override them, set `EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME` and `EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET` in the frontend environment. Never put the MongoDB connection string in frontend environment variables.

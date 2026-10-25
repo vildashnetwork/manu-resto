@@ -47,6 +47,7 @@ The uploader uses `API_BASE_URL` or defaults to `https://manu-ltx7.onrender.com/
 - `POST|GET /api/sales`, `POST /api/sales/:id/cancel`, `PUT /api/sales/:id/payment`
 - `POST /api/expenses`
 - `GET|PUT /api/settings` (admin notification email and notification preferences)
+- `GET /api/sync/snapshot` (all active catalog/customer and transaction data needed for device offline mode)
 - `GET /api/reports`
 
 Sale and repayment writes use MongoDB transactions. Use a MongoDB replica set or Atlas deployment that supports transactions. Product images are uploaded by the frontend to Cloudinary; this API stores the secure image URL, not the image file.

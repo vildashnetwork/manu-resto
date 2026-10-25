@@ -13,6 +13,7 @@ const LINKS = [
   { label: 'Customers', path: '/customers', icon: 'people-outline' },
   { label: 'Stock', path: '/stock', icon: 'cube-outline' },
   { label: 'Reports', path: '/reports', icon: 'bar-chart-outline' },
+  { label: 'Sync progress', path: '/sync', icon: 'sync-outline' },
   { label: 'Settings', path: '/settings', icon: 'settings-outline' },
 ];
 

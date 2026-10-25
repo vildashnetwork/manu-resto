@@ -22,33 +22,49 @@ async function enqueue(db, entity, entityId, op, payload = null) {
 export async function getProducts() {
   const db = await getDb();
   return db.getAllAsync(
-    `SELECT p.*, COALESCE((SELECT SUM(qty) FROM stock_movements m WHERE m.product_id = p.id), 0) AS stock
+    `SELECT p.*, p.base_stock + COALESCE((SELECT SUM(qty) FROM stock_movements m WHERE m.product_id = p.id AND m.remote_id IS NULL), 0) AS stock
      FROM products p WHERE p.active = 1 AND p.business_id = ? ORDER BY p.category, p.name`,
     [BUSINESS_ID]
   );
 }
 
-export async function createProduct({ name, category, unit, price, cost, threshold, tracked, openingStock }) {
+export async function createProduct({ name, category, unit, price, cost, threshold, tracked, openingStock, imageUrl, barcode }) {
   if (!name?.trim()) throw new Error('Product name is required');
   if (!(price > 0)) throw new Error('Selling price must be greater than 0');
   const db = await getDb();
   const id = uid();
   await db.withTransactionAsync(async () => {
     await db.runAsync(
-      `INSERT INTO products (id, business_id, name, category, unit, price, cost, low_stock_threshold, tracked, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [id, BUSINESS_ID, name.trim(), category || 'Other', unit || 'unit', price, cost || 0, threshold || 0, tracked ? 1 : 0, now()]
+      `INSERT INTO products (id, business_id, name, category, unit, price, cost, low_stock_threshold, tracked, created_at, image_url, barcode)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [id, BUSINESS_ID, name.trim(), category || 'Other', unit || 'unit', price, cost || 0, threshold || 0, tracked ? 1 : 0, now(), imageUrl || null, barcode || null]
     );
-    if (tracked && openingStock > 0) {
-      await db.runAsync(
-        'INSERT INTO stock_movements (id, business_id, product_id, type, qty, note, created_at) VALUES (?,?,?,?,?,?,?)',
-        [uid(), BUSINESS_ID, id, 'opening', openingStock, 'Opening stock', now()]
-      );
-    }
     await audit(db, { action: 'product.create', entity: 'product', entityId: id });
     await enqueue(db, 'product', id, 'upsert');
+    if (tracked && openingStock > 0) {
+      const movementId = uid();
+      await db.runAsync(
+        'INSERT INTO stock_movements (id, business_id, product_id, type, qty, note, created_at) VALUES (?,?,?,?,?,?,?)',
+        [movementId, BUSINESS_ID, id, 'opening', openingStock, 'Opening stock', now()]
+      );
+      await enqueue(db, 'stock_movement', movementId, 'insert');
+    }
   });
   return id;
+}
+
+export async function updateProduct(productId, product) {
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `UPDATE products SET name = ?, category = ?, unit = ?, price = ?, cost = ?,
+       low_stock_threshold = ?, image_url = ?, remote_image_url = NULL, barcode = ? WHERE id = ?`,
+      [product.name.trim(), product.category || 'Other', product.unit || 'unit', product.price,
+        product.cost || 0, product.threshold || 0, product.imageUrl || null, product.barcode || null, productId]
+    );
+    await audit(db, { action: 'product.update', entity: 'product', entityId: productId });
+    await enqueue(db, 'product', productId, 'upsert');
+  });
 }
 
 export async function updateProductPrice(productId, price, cost) {
@@ -66,6 +82,14 @@ export async function addStockMovement({ productId, type, qty, note }) {
   if (!qty) throw new Error('Enter a quantity');
   const db = await getDb();
   const id = uid();
+  if (qty < 0) {
+    const product = await db.getFirstAsync(
+      'SELECT base_stock + COALESCE((SELECT SUM(qty) FROM stock_movements WHERE product_id = products.id AND remote_id IS NULL),0) AS stock FROM products WHERE id = ? AND tracked = 1',
+      [productId]
+    );
+    if (!product) throw new Error('Tracked product not found');
+    if (product.stock < Math.abs(qty)) throw new Error('Insufficient stock.');
+  }
   await db.withTransactionAsync(async () => {
     await db.runAsync(
       'INSERT INTO stock_movements (id, business_id, product_id, type, qty, note, created_at) VALUES (?,?,?,?,?,?,?)',
@@ -156,26 +180,47 @@ export async function recordRepayment({ idempotencyKey, customerId, amount, meth
 
 /* ------------------------------------ Sales ------------------------------------ */
 
-export async function createSale({ idempotencyKey, items, customerId, payments, allowOverLimit = false }) {
+export async function createSale({ idempotencyKey, items, customerId, customerName, payments, allowOverLimit = false }) {
   const db = await getDb();
 
   // Idempotency: a double tap or retry returns the original sale.
   const existing = await db.getFirstAsync('SELECT * FROM sales WHERE idempotency_key = ?', [idempotencyKey]);
-  if (existing) return { sale: existing, duplicate: true };
+  if (existing) {
+    const existingItems = await db.getAllAsync('SELECT * FROM sale_items WHERE sale_id = ?', [existing.id]);
+    return {
+      sale: {
+        ...existing, id: existing.id, receipt_no: existing.receipt_no, customerId: existing.customer_id,
+        customer_name: existing.customer_name, items: existingItems.map((item) => ({
+          productId: item.product_id, product_name: item.product_name, unit_price: item.unit_price,
+          unit_cost: item.unit_cost, qty: item.qty, line_total: item.line_total,
+        })),
+      },
+      duplicate: true,
+    };
+  }
 
   if (!items?.length) throw new Error('The cart is empty');
+  for (const item of items) {
+    if (!item.tracked) continue;
+    const product = await db.getFirstAsync(
+      'SELECT base_stock + COALESCE((SELECT SUM(qty) FROM stock_movements WHERE product_id = products.id AND remote_id IS NULL),0) AS stock FROM products WHERE id = ?',
+      [item.productId]
+    );
+    if (!product || product.stock < item.qty) throw new Error(`Not enough stock for ${item.name}.`);
+  }
   const total = items.reduce((s, i) => s + i.unitPrice * i.qty, 0);
   const paid = payments.reduce((s, p) => s + p.amount, 0);
   if (paid > total) throw new Error('Payments exceed the sale total');
   const credit = total - paid;
+  const customer = customerId ? await getCustomer(customerId) : null;
 
   if (credit > 0) {
     if (!customerId) throw new Error('Select a customer to sell on credit');
-    const c = await getCustomer(customerId);
-    if (c.credit_limit > 0 && c.balance + credit > c.credit_limit && !allowOverLimit) {
+    if (!customer) throw new Error('Customer not found');
+    if (customer.credit_limit > 0 && customer.balance + credit > customer.credit_limit && !allowOverLimit) {
       const err = new Error('Credit limit exceeded');
       err.code = 'CREDIT_LIMIT';
-      err.details = { balance: c.balance, limit: c.credit_limit, credit };
+      err.details = { balance: customer.balance, limit: customer.credit_limit, credit };
       throw err;
     }
   }
@@ -187,9 +232,9 @@ export async function createSale({ idempotencyKey, items, customerId, payments, 
     const receiptNo = `R${receiptStamp(ts)}-${String(cnt.c + 1).padStart(3, '0')}`;
 
     await db.runAsync(
-      `INSERT INTO sales (id, business_id, receipt_no, cashier_id, customer_id, total, paid_amount, credit_amount, idempotency_key, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [saleId, BUSINESS_ID, receiptNo, session.userId, customerId || null, total, paid, credit, idempotencyKey, ts]
+      `INSERT INTO sales (id, business_id, receipt_no, cashier_id, customer_id, customer_name, total, paid_amount, credit_amount, idempotency_key, created_at, allow_over_limit)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [saleId, BUSINESS_ID, receiptNo, session.userId, customerId || null, customer?.name || customerName || null, total, paid, credit, idempotencyKey, ts, allowOverLimit ? 1 : 0]
     );
 
     for (const i of items) {
@@ -206,11 +251,11 @@ export async function createSale({ idempotencyKey, items, customerId, payments, 
       }
     }
 
-    for (const p of payments) {
+    for (const [index, p] of payments.entries()) {
       await db.runAsync(
         `INSERT INTO payments (id, business_id, kind, sale_id, customer_id, method, amount, idempotency_key, created_at)
          VALUES (?,?,?,?,?,?,?,?,?)`,
-        [uid(), BUSINESS_ID, 'sale', saleId, customerId || null, p.method, p.amount, `${idempotencyKey}:${p.method}`, ts]
+        [uid(), BUSINESS_ID, 'sale', saleId, customerId || null, p.method, p.amount, `${idempotencyKey}:${index}`, ts]
       );
     }
 
@@ -227,7 +272,29 @@ export async function createSale({ idempotencyKey, items, customerId, payments, 
   });
 
   const sale = await db.getFirstAsync('SELECT * FROM sales WHERE id = ?', [saleId]);
-  return { sale, duplicate: false };
+  const saleItems = await db.getAllAsync('SELECT * FROM sale_items WHERE sale_id = ?', [saleId]);
+  return {
+    sale: {
+      ...sale,
+      id: sale.id,
+      receipt_no: sale.receipt_no,
+      customerId: sale.customer_id,
+      customer_name: customer?.name || sale.customer_name || null,
+      total: sale.total,
+      paid_amount: sale.paid_amount,
+      credit_amount: sale.credit_amount,
+      created_at: sale.created_at,
+      items: saleItems.map((item) => ({
+        productId: item.product_id,
+        product_name: item.product_name,
+        unit_price: item.unit_price,
+        unit_cost: item.unit_cost,
+        qty: item.qty,
+        line_total: item.line_total,
+      })),
+    },
+    duplicate: false,
+  };
 }
 
 // Cancellation is a reversal with a reason, never a silent delete.
@@ -269,7 +336,7 @@ export async function cancelSale(saleId, reason) {
 export async function getRecentSales(limit = 30, from = 0, to = Date.now()) {
   const db = await getDb();
   return db.getAllAsync(
-    `SELECT s.*, c.name AS customer_name FROM sales s LEFT JOIN customers c ON c.id = s.customer_id
+    `SELECT s.*, COALESCE(c.name, s.customer_name) AS customer_name FROM sales s LEFT JOIN customers c ON c.id = s.customer_id
      WHERE s.created_at BETWEEN ? AND ? ORDER BY s.created_at DESC LIMIT ?`,
     [from, to, limit]
   );
@@ -277,18 +344,124 @@ export async function getRecentSales(limit = 30, from = 0, to = Date.now()) {
 
 /* ----------------------------------- Expenses ----------------------------------- */
 
-export async function addExpense({ category, amount, method, note }) {
+export async function addExpense({ category, amount, method, note, idempotencyKey = uid() }) {
   if (!(amount > 0)) throw new Error('Enter an amount greater than 0');
   const db = await getDb();
   const id = uid();
   await db.withTransactionAsync(async () => {
     await db.runAsync(
-      'INSERT INTO expenses (id, business_id, category, amount, method, note, created_by, created_at) VALUES (?,?,?,?,?,?,?,?)',
-      [id, BUSINESS_ID, category, amount, method, note || null, session.userId, now()]
+      'INSERT INTO expenses (id, business_id, category, amount, method, note, created_by, created_at, idempotency_key) VALUES (?,?,?,?,?,?,?,?,?)',
+      [id, BUSINESS_ID, category, amount, method, note || null, session.userId, now(), idempotencyKey]
     );
     await audit(db, { action: 'expense.create', entity: 'expense', entityId: id });
     await enqueue(db, 'expense', id, 'insert');
   });
+  return { id };
+}
+
+export async function updateSalePayment(saleId, { paidAmount, method, idempotencyKey }) {
+  const db = await getDb();
+  const sale = await db.getFirstAsync('SELECT * FROM sales WHERE id = ?', [saleId]);
+  if (!sale) throw new Error('Sale not found');
+  if (paidAmount > sale.total) throw new Error('Paid amount cannot exceed the sale total');
+  const credit = sale.total - paidAmount;
+  const delta = credit - sale.credit_amount;
+  const customer = sale.customer_id ? await getCustomer(sale.customer_id) : null;
+  if (delta !== 0 && !customer) throw new Error('A customer account is required to change this sale’s credit.');
+  if (delta > 0 && customer.credit_limit > 0 && customer.balance + delta > customer.credit_limit) {
+    const error = new Error('Credit limit exceeded');
+    error.code = 'CREDIT_LIMIT';
+    error.details = { balance: customer.balance, limit: customer.credit_limit, credit: delta };
+    throw error;
+  }
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('UPDATE sales SET paid_amount = ?, credit_amount = ?, sync_status = ? WHERE id = ?', [paidAmount, credit, 'pending', saleId]);
+    await db.runAsync("UPDATE payments SET status = 'reversed' WHERE sale_id = ?", [saleId]);
+    if (paidAmount > 0) {
+      await db.runAsync(
+        `INSERT INTO payments (id, business_id, kind, sale_id, customer_id, method, amount, idempotency_key, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        [uid(), BUSINESS_ID, 'sale', saleId, sale.customer_id, method, paidAmount, `${idempotencyKey}:payment`, now()]
+      );
+    }
+    if (delta !== 0) {
+      await db.runAsync(
+        `INSERT INTO customer_ledger (id, business_id, customer_id, type, amount, ref_type, ref_id, note, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        [uid(), BUSINESS_ID, sale.customer_id, delta > 0 ? 'credit_sale' : 'payment', delta, 'sale_adjustment', saleId, 'Sale payment adjusted', now()]
+      );
+    }
+    await enqueue(db, 'sale', saleId, 'payment', { paidAmount, method, idempotencyKey });
+  });
+  return { ...sale, paid_amount: paidAmount, credit_amount: credit };
+}
+
+export async function getCachedSettings() {
+  const db = await getDb();
+  const row = await db.getFirstAsync("SELECT value FROM app_settings WHERE key = 'email_settings'");
+  return row ? JSON.parse(row.value) : {
+    adminEmail: '',
+    notifications: { lowStock: true, creditDebt: true, expenses: true },
+    senderEmail: '',
+    senderConfigured: false,
+  };
+}
+
+export async function saveCachedSettings(settings) {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO app_settings (key, value) VALUES ('email_settings', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [JSON.stringify(settings)]
+  );
+  await enqueue(db, 'settings', 'main', 'upsert', settings);
+  return settings;
+}
+
+export async function cacheEmailSettings(settings) {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO app_settings (key, value) VALUES ('email_settings', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [JSON.stringify(settings)]
+  );
+  return settings;
+}
+
+export async function getSyncQueue() {
+  const db = await getDb();
+  return db.getAllAsync("SELECT * FROM sync_queue WHERE status != 'done' ORDER BY created_at, rowid");
+}
+
+export async function getSyncCounts() {
+  const db = await getDb();
+  return db.getFirstAsync(
+    `SELECT COUNT(*) AS total,
+      SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done,
+      SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors,
+      SUM(CASE WHEN status = 'pending' OR status = 'syncing' THEN 1 ELSE 0 END) AS pending
+     FROM sync_queue`
+  );
+}
+
+export async function setQueueStatus(id, status, error = null) {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE sync_queue SET status = ?, attempts = attempts + ?, error = ? WHERE id = ?',
+    [status, status === 'error' ? 1 : 0, error, id]
+  );
+}
+
+export async function markQueueDone(id) {
+  const db = await getDb();
+  await db.runAsync("UPDATE sync_queue SET status = 'done', error = NULL WHERE id = ?", [id]);
+}
+
+export async function getLocalEntity(entity, id) {
+  const db = await getDb();
+  const table = { product: 'products', customer: 'customers', sale: 'sales', payment: 'payments', expense: 'expenses', stock_movement: 'stock_movements' }[entity];
+  if (!table) throw new Error(`Unsupported local sync entity: ${entity}`);
+  return db.getFirstAsync(`SELECT * FROM ${table} WHERE id = ?`, [id]);
 }
 
 /* ------------------------------------ Reports ------------------------------------ */

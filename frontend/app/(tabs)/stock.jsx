@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { ScrollView, View, Text, Image, Alert, Pressable, StyleSheet, Modal } from 'react-native';
+import { ScrollView, View, Text, Image, Alert, Pressable, StyleSheet, Modal, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { scanWithGooglePlayServices } from '../../src/api/barcodeScanner';
 import {
   Hero, Card, Btn, Chip, Field, SearchBox, Sheet, IconDot, Pill, Empty, Fab, useLoad, ScreenShimmer, screenStyle, body,
 } from '../../src/components/ui';
@@ -130,14 +131,22 @@ export default function Stock() {
       }
     }
     setBarcodeScanAction(action);
+    if (Platform.OS === 'android') {
+      try {
+        await scanWithGooglePlayServices((result) => onBarcodeScanned(result, action));
+      } catch (error) {
+        Alert.alert('Cannot scan barcode', error.message || String(error));
+      }
+      return;
+    }
     setBarcodeScannerOpen(true);
   }
 
-  function onBarcodeScanned({ data }) {
+  function onBarcodeScanned({ data }, action = barcodeScanAction) {
     const barcode = String(data || '').trim();
     if (!barcode) return;
     setBarcodeScannerOpen(false);
-    if (barcodeScanAction === 'edit') {
+    if (action === 'edit') {
       const product = allProducts.find(
         (item) => item.barcode?.trim().toLowerCase() === barcode.toLowerCase()
       );

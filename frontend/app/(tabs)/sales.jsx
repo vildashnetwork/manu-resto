@@ -6,6 +6,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import { scanWithGooglePlayServices } from '../../src/api/barcodeScanner';
 import {
   Hero, Card, Btn, Chip, Field, SearchBox, Sheet, Row, Avatar, IconDot, Money, Pill, Empty, useLoad, ScreenShimmer, screenStyle,
 } from '../../src/components/ui';
@@ -135,11 +136,18 @@ export default function Sales() {
         return;
       }
     }
+    if (Platform.OS === 'android') {
+      try {
+        await scanWithGooglePlayServices(onBarcodeScanned);
+      } catch (error) {
+        Alert.alert('Cannot scan barcode', error.message || String(error));
+      }
+      return;
+    }
     setScannerOpen(true);
   }
 
   function onBarcodeScanned({ data: code }) {
-    if (!scannerOpen) return;
     setScannerOpen(false);
     const product = products.find((p) => p.barcode && p.barcode.trim().toLowerCase() === String(code).trim().toLowerCase());
     if (!product) {

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Manu's Resto Manager",
     "slug": "manus-resto-manager",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "orientation": "portrait",
     "scheme": "manusresto",
     "icon": "./public/bglogo.png",
@@ -27,6 +27,7 @@
           "cameraPermission": "Allow Manu's Resto Manager to scan product barcodes."
         }
       ],
+      "./plugins/withGooglePlayStoreQuery",
       [
         "expo-local-authentication",
         {
@@ -44,6 +45,7 @@
     ],
     "android": {
       "package": "com.manusresto.manager",
+      "versionCode": 25,
       "adaptiveIcon": {
         "foregroundImage": "./public/nobglogo.png",
         "backgroundColor": "#0B3827"

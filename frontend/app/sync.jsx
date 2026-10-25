@@ -1,19 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Btn, Card, Hero, Pill, Section, screenStyle, useLoad } from '../src/components/ui';
-import { getBackendAvailability, getConnectionMode, getSyncStatus, retrySync, setConnectionMode, syncNow } from '../src/api/repo';
+import { Btn, Card, Hero, Pill, Section, ScreenRefreshControl, screenStyle, useLoad } from '../src/components/ui';
+import { cacheOfflineImages, getBackendAvailability, getConnectionMode, getSyncStatus, retrySync, setConnectionMode, syncNow } from '../src/api/repo';
 import { colors } from '../src/theme';
 import { fmtDateTime } from '../src/utils';
 
 export default function SyncCenter() {
-  const [status, reload] = useLoad(getSyncStatus);
+  const [status, reload, , , refreshing] = useLoad(getSyncStatus, { label: 'Sync Center' });
   const [mode, setMode] = useState('online');
   const [availability, setAvailability] = useState(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     getConnectionMode().then(setMode).catch((error) => Alert.alert('Could not read connection mode', error.message || String(error)));
-    const timer = setInterval(reload, 1000);
+    const timer = setInterval(() => reload({ silent: true }), 1000);
     return () => clearInterval(timer);
   }, [reload]);
 
@@ -47,13 +47,32 @@ export default function SyncCenter() {
     }
   }
 
+  async function downloadImages() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const result = await cacheOfflineImages();
+      Alert.alert('Images ready offline', `${result.cached} product images are stored on this device.`);
+      await reload();
+    } catch (error) {
+      Alert.alert('Could not download product images', error.message || String(error));
+      await reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const pendingCount = status?.pending || 0;
   const failedCount = status?.failed || 0;
   const total = status?.total || 0;
   const processed = status?.processed || 0;
 
   return (
-    <ScrollView style={screenStyle} contentContainerStyle={s.content}>
+    <ScrollView
+      style={screenStyle}
+      contentContainerStyle={s.content}
+      refreshControl={<ScreenRefreshControl refreshing={refreshing} onRefresh={() => reload()} />}
+    >
       <Hero eyebrow="Local-first data" title="Sync Center">
         <Text style={s.heroText}>Your changes are stored on this device first. Sync runs separately in the background.</Text>
       </Hero>
@@ -90,7 +109,7 @@ export default function SyncCenter() {
           <View style={s.track}>
             <View style={[s.fill, { width: `${status?.active ? status.percent : failedCount ? 0 : 100}%` }]} />
           </View>
-          <Text style={s.detail}>{status?.active ? `${status.percent}% complete` : 'Sync work does not block screens or local saves.'}</Text>
+          <Text style={s.detail}>{status?.active ? `${status.percent}% complete` : 'Data sync is separate from screen loading. Image downloads are optional and run only when requested.'}</Text>
           {status?.lastSyncAt ? <Text style={s.detail}>Last sync: {fmtDateTime(status.lastSyncAt)}</Text> : null}
           {Number(status?.imageCacheFailures) > 0 ? (
             <Text style={s.warning}>{status.imageCacheFailures} product image(s) could not be cached. Check your connection and sync again.</Text>
@@ -105,6 +124,13 @@ export default function SyncCenter() {
             ) : (
               <Btn title={busy || status?.active ? 'Syncing…' : 'Sync now'} icon="sync" onPress={() => runSync()} disabled={busy || status?.active || mode !== 'online'} />
             )}
+            <Btn
+              title={busy ? 'Downloading…' : 'Download product images for offline use'}
+              icon="image-outline"
+              variant="soft"
+              onPress={downloadImages}
+              disabled={busy || status?.active || mode !== 'online'}
+            />
             <Btn title="Refresh status" icon="refresh-outline" variant="soft" onPress={reload} />
           </View>
         </Card>

@@ -7,7 +7,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import {
-  Hero, Card, Btn, Chip, Field, SearchBox, Sheet, Row, Avatar, IconDot, Money, Pill, Empty, LoadError, useLoad, ScreenShimmer, screenStyle,
+  Hero, Card, Btn, Chip, Field, SearchBox, Sheet, Row, Avatar, IconDot, Money, Pill, Empty, LoadError, useLoad, ScreenShimmer, ScreenRefreshControl, screenStyle,
 } from '../../src/components/ui';
 import { getProducts, getCustomers, createSale } from '../../src/api/repo';
 import { fcfa, parseAmount, uid } from '../../src/utils';
@@ -43,10 +43,10 @@ function getReceiptLogoDataUri() {
 }
 
 export default function Sales() {
-  const [data, reload, loading, error] = useLoad(async () => ({
+  const [data, reload, loading, error, refreshing] = useLoad(async () => ({
     products: await getProducts(),
     customers: await getCustomers(),
-  }));
+  }), { label: 'Sales' });
   const [cat, setCat] = useState('All');
   const [q, setQ] = useState('');
   const [cart, setCart] = useState({}); // productId -> qty
@@ -334,7 +334,12 @@ export default function Sales() {
 
   return (
     <View style={screenStyle}>
-      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 120 }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: 120 }}
+        refreshControl={<ScreenRefreshControl refreshing={refreshing} onRefresh={() => reload()} />}
+      >
         <Hero eyebrow="Tap items to add" title="New sale">
           <View style={s.searchRow}>
             <View style={{ flex: 1 }}>

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ScrollView, View, Text, Alert, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Hero, Card, Btn, Chip, Field, SearchBox, Sheet, Row, Avatar, Pill, Money, Empty, Fab, LoadError, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
+import { Hero, Card, Btn, Chip, Field, SearchBox, Sheet, Row, Avatar, Pill, Money, Empty, Fab, LoadError, useLoad, ScreenShimmer, ScreenRefreshControl, screenStyle, body } from '../../src/components/ui';
 import { getCustomers, createCustomer } from '../../src/api/repo';
 import { fcfa, parseAmount } from '../../src/utils';
 import { colors } from '../../src/theme';
@@ -10,7 +10,7 @@ const EMPTY = { name: '', phone: '', code: '', limit: '', opening: '', notes: ''
 
 export default function Customers() {
   const router = useRouter();
-  const [list, reload, loading, error] = useLoad(getCustomers);
+  const [list, reload, loading, error, refreshing] = useLoad(getCustomers, { label: 'Customers' });
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState('All');
   const [open, setOpen] = useState(false);
@@ -55,7 +55,12 @@ export default function Customers() {
 
   return (
     <View style={screenStyle}>
-      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 100 }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: 100 }}
+        refreshControl={<ScreenRefreshControl refreshing={refreshing} onRefresh={() => reload()} />}
+      >
         <Hero eyebrow="Credit accounts" title="Customers">
           <Text style={s.heroLabel}>Total owed to you</Text>
           <Money value={totalDebt} size={36} color="#fff" style={{ marginTop: 2 }} />

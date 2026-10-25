@@ -2,7 +2,7 @@ import React, { useContext } from 'react';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { DrawerContext, HeaderBrandTitle, MenuButton } from '../../src/components/AppNavigation';
+import { ConnectionModeToggle, DrawerContext, HeaderBrandTitle, MenuButton } from '../../src/components/AppNavigation';
 import { colors } from '../../src/theme';
 
 const icon = (name) => ({ color, size }) => <Ionicons name={name} size={size} color={color} />;
@@ -20,6 +20,7 @@ export default function TabsLayout() {
         headerTitle: () => <HeaderBrandTitle />,
         headerTitleAlign: 'left',
         headerLeft: () => <MenuButton onPress={openDrawer} />,
+        headerRight: () => <ConnectionModeToggle compact />,
         tabBarActiveTintColor: colors.forest,
         tabBarInactiveTintColor: colors.muted,
         tabBarStyle: {

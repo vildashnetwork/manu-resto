@@ -1,8 +1,12 @@
 import { BACKEND_URL } from '../config/backend';
 import { uid } from '../utils';
 import {
-  commitLocalChanges, getMeta, getRecord, listRecords, putRecord, resolveId, setMeta,
+  commitLocalChanges, getMeta, getRecord, listRecords, putRecord, putRecords, resolveId, setMeta,
 } from '../db';
+
+const memoryRecords = new Map();
+const cacheWrites = new Map();
+let connectionModeCache;
 
 export async function backendRequest(path, options = {}) {
   const controller = new AbortController();
@@ -45,6 +49,7 @@ export async function backendRequest(path, options = {}) {
     const error = new Error(payload?.message || payload?.error || fallback);
     error.code = payload?.code;
     error.details = payload?.details;
+    error.status = response.status;
     throw error;
   }
 
@@ -235,13 +240,18 @@ async function getReportOnline(from, to) {
   return entity(await get(`/reports?${params.toString()}`), 'report');
 }
 
-function triggerSync() {
-  getMeta('connectionMode', 'online').then((mode) => {
+let syncTimer;
+
+function triggerSync(options = {}) {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    selectedMode().then((mode) => {
     if (mode !== 'online') return;
-    import('../db/sync').then(({ syncNow }) => syncNow()).catch((error) => {
+      import('../db/sync').then(({ syncNow }) => syncNow(options)).catch((error) => {
       console.warn('Background sync failed', error);
     });
-  }).catch((error) => console.warn('Could not read connection mode', error));
+    }).catch((error) => console.warn('Could not read connection mode', error));
+  }, 2500);
 }
 
 function imageProduct(product) {
@@ -249,16 +259,128 @@ function imageProduct(product) {
   return { ...normalized, image_url: product.localImageUri || normalized.image_url };
 }
 
+async function selectedMode() {
+  if (connectionModeCache) return connectionModeCache;
+  try {
+    connectionModeCache = await getMeta('connectionMode', 'online');
+    return connectionModeCache;
+  } catch (error) {
+    console.warn('Could not read saved connection mode; using online reads until it can be confirmed', error);
+    connectionModeCache = 'online';
+    return connectionModeCache;
+  }
+}
+
+function remember(type, rows) {
+  const previous = new Map((memoryRecords.get(type) || []).map((row) => [String(row.id), JSON.stringify(row)]));
+  memoryRecords.set(type, rows);
+  const changed = rows.filter((row) => previous.get(String(row.id)) !== JSON.stringify(row));
+  if (!changed.length) return;
+  const write = (cacheWrites.get(type) || Promise.resolve())
+    .catch(() => {})
+    .then(() => putRecords(type, changed))
+    .catch((error) => {
+      console.warn(`Could not save ${type} to the local cache`, error);
+    });
+  cacheWrites.set(type, write);
+}
+
+async function onlineOrLocal(type, fetchOnline, normalize = (row) => row) {
+  const mode = await selectedMode();
+  if (mode === 'offline') {
+    const inMemory = memoryRecords.get(type);
+    if (inMemory?.length) return inMemory.map(normalize);
+    try {
+      const cached = await listRecords(type);
+      if (cached.length) return cached.map(normalize);
+      return [];
+    } catch (error) {
+      const inMemory = memoryRecords.get(type);
+      if (inMemory?.length) return inMemory.map(normalize);
+      throw new Error(`Offline ${type} data is unavailable on this device. Connect and sync once to save it for offline use.`);
+    }
+  }
+
+  const rows = (await fetchOnline()).map(normalize);
+  remember(type, rows);
+  return rows;
+}
+
 async function cachedOrFetch(type, fetchOnline) {
-  const cached = await listRecords(type);
-  if (cached.length > 0 || await getMeta('connectionMode', 'online') === 'offline') return cached;
+  let mode = 'online';
+  let cached = [];
+  try {
+    mode = await getMeta('connectionMode', 'online');
+    cached = await listRecords(type);
+  } catch (error) {
+    console.warn(`Local ${type} cache unavailable; trying the backend`, error);
+  }
+  if (cached.length > 0 || mode === 'offline') return cached;
   const rows = await fetchOnline();
-  for (const row of rows) await putRecord(type, row);
+  try {
+    for (const row of rows) await putRecord(type, row);
+  } catch (error) {
+    console.warn(`Could not cache ${type}; displaying backend data`, error);
+  }
   return rows;
 }
 
 async function refreshSnapshot() {
-  const payload = await get('/sync/snapshot');
+  let payload;
+  try {
+    payload = await get('/sync/snapshot');
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    console.warn('Sync snapshot endpoint is not deployed; loading available records from existing API routes.');
+    const from = 0;
+    const to = Date.now();
+    const [products, customers, sales, settings, report] = await Promise.all([
+      getProductsOnline(),
+      getCustomersOnline(),
+      getRecentSalesOnline(100, from, to),
+      getSettingsOnline(),
+      getReportOnline(from, to),
+    ]);
+    const ledger = [];
+    for (const customer of customers) {
+      const statement = await getStatementOnline(customer.id);
+      ledger.push(...statement.map((row) => ({ ...row, customerId: customer.id })));
+    }
+    const legacyPayments = [
+      ...sales.filter((sale) => sale.paid_amount > 0).map((sale) => ({
+        id: `legacy-sale-${sale.id}`,
+        kind: 'sale',
+        saleId: sale.id,
+        customerId: sale.customerId || null,
+        method: 'Unspecified',
+        amount: sale.paid_amount,
+        status: sale.status === 'cancelled' ? 'reversed' : 'ok',
+        created_at: sale.created_at,
+      })),
+      ...ledger.filter((row) => row.type === 'payment').map((row) => ({
+        id: `legacy-repayment-${row.id}`,
+        kind: 'repayment',
+        customerId: row.customerId,
+        method: row.note?.match(/^Repayment \((.+)\)$/)?.[1] || 'Unspecified',
+        amount: Math.abs(row.amount),
+        status: 'ok',
+        created_at: row.created_at,
+      })),
+    ];
+    payload = {
+      generatedAt: Date.now(),
+      snapshot: {
+        products,
+        customers,
+        sales,
+        payments: legacyPayments,
+        ledger,
+        expenses: report.expList || [],
+        movements: [],
+        settings: [{ ...settings, id: 'main' }],
+      },
+    };
+  }
   const snapshot = entity(payload, 'snapshot');
   const normalized = {
     products: collection(snapshot, 'products').map(imageProduct),
@@ -277,7 +399,7 @@ async function refreshSnapshot() {
 }
 
 export async function getProducts() {
-  const rows = await cachedOrFetch('products', getProductsOnline);
+  const rows = await onlineOrLocal('products', getProductsOnline, imageProduct);
   return rows.map(imageProduct).sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
 }
 
@@ -348,19 +470,24 @@ export async function addStockMovement(movement) {
 }
 
 export async function getCustomers() {
-  const rows = await cachedOrFetch('customers', getCustomersOnline);
+  const rows = await onlineOrLocal('customers', getCustomersOnline, normalizeCustomer);
   return rows.map(normalizeCustomer).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function getSettings() {
-  const setting = await getRecord('settings', 'main');
-  if (setting) return setting;
-  if (await getMeta('connectionMode', 'online') === 'offline') {
-    return { adminEmail: '', notifications: { lowStock: true, creditDebt: true, expenses: true }, senderEmail: '', senderConfigured: false };
+  if (await selectedMode() !== 'offline') {
+    const result = await getSettingsOnline();
+    const record = { ...result, id: 'main' };
+    memoryRecords.set('settings', [record]);
+    putRecord('settings', record).catch((error) => {
+      console.warn('Could not save settings to the local cache', error);
+    });
+    return result;
   }
-  const result = await getSettingsOnline();
-  await putRecord('settings', { ...result, id: 'main' });
-  return result;
+  const memorySetting = memoryRecords.get('settings')?.[0];
+  if (memorySetting) return memorySetting;
+  const setting = await getRecord('settings', 'main');
+  return setting || { adminEmail: '', notifications: { lowStock: true, creditDebt: true, expenses: true }, senderEmail: '', senderConfigured: false };
 }
 
 export async function updateSettings(settings) {
@@ -380,11 +507,21 @@ export async function updateSettings(settings) {
 }
 
 export async function getCustomer(id) {
-  const cached = await getRecord('customers', id);
-  if (cached) return normalizeCustomer(cached);
-  if (await getMeta('connectionMode', 'online') === 'offline') throw new Error('This customer is not available on this device.');
-  const customer = await getCustomerOnline(id);
-  await putRecord('customers', customer);
+  if (await selectedMode() === 'offline') {
+    const memoryCustomer = (memoryRecords.get('customers') || []).find((customer) => String(customer.id) === String(id));
+    if (memoryCustomer) return normalizeCustomer(memoryCustomer);
+    const cached = await getRecord('customers', id);
+    if (cached) return normalizeCustomer(cached);
+    throw new Error('This customer is not available on this device.');
+  }
+  const customer = normalizeCustomer(await getCustomerOnline(id));
+  memoryRecords.set('customers', [
+    ...(memoryRecords.get('customers') || []).filter((row) => String(row.id) !== String(customer.id)),
+    customer,
+  ]);
+  putRecord('customers', customer).catch((error) => {
+    console.warn('Could not save customer to the local cache', error);
+  });
   return customer;
 }
 
@@ -412,10 +549,14 @@ export async function createCustomer(customer) {
 }
 
 export async function getStatement(customerId) {
-  let rows = (await listRecords('ledger')).filter((row) => String(row.customerId) === String(customerId));
-  if (!rows.length && await getMeta('connectionMode', 'online') !== 'offline') {
+  let rows;
+  if (await selectedMode() === 'offline') {
+    rows = (await listRecords('ledger')).filter((row) => String(row.customerId) === String(customerId));
+  } else {
     rows = await getStatementOnline(customerId);
-    for (const row of rows) await putRecord('ledger', row);
+    putRecords('ledger', rows).catch((error) => {
+      console.warn('Could not save customer statement to the local cache', error);
+    });
   }
   let balance = 0;
   return rows.sort((a, b) => a.created_at - b.created_at).map((row) => {
@@ -449,7 +590,7 @@ export async function recordRepayment(payment) {
 export async function createSale(sale) {
   if (!sale.items?.length) throw new Error('The cart is empty');
   const key = sale.idempotencyKey || uid();
-  const products = await listRecords('products');
+  const products = memoryRecords.get('products') || await listRecords('products');
   const productById = new Map(products.map((product) => [String(product.id), product]));
   const items = sale.items.map((item) => {
     const product = productById.get(String(item.productId));
@@ -592,12 +733,13 @@ export async function cancelSale(saleId, reason) {
 }
 
 export async function getRecentSales(limit = 30, from = 0, to = Date.now()) {
-  let rows = await listRecords('sales');
-  if (await getMeta('connectionMode', 'online') !== 'offline' && (!rows.length || !(await getMeta('lastSyncAt')))) {
-    const remoteRows = await getRecentSalesOnline(Math.min(limit, 100), from, to);
-    for (const row of remoteRows) await putRecord('sales', row);
-    rows = rows.length ? [...rows.filter((local) => !remoteRows.some((remote) => remote.id === local.id)), ...remoteRows] : remoteRows;
+  if (await selectedMode() !== 'offline') {
+    const rows = await getRecentSalesOnline(Math.min(limit, 100), from, to);
+    remember('sales', rows);
+    return rows.slice(0, limit);
   }
+  const memorySales = memoryRecords.get('sales');
+  const rows = memorySales?.length ? memorySales : await listRecords('sales');
   return rows.map(normalizeSale)
     .filter((sale) => Number(sale.created_at) >= from && Number(sale.created_at) <= to)
     .sort((a, b) => b.created_at - a.created_at)
@@ -659,28 +801,36 @@ function buildLocalReport(from, to, sales, payments, expenses, customers) {
 }
 
 export async function getReport(from, to) {
+  if (await selectedMode() !== 'offline') {
+    return getReportOnline(from, to);
+  }
   const [sales, payments, expenses, customers] = await Promise.all([
     listRecords('sales'), listRecords('payments'), listRecords('expenses'), listRecords('customers'),
   ]);
-  const mode = await getMeta('connectionMode', 'online');
-  if (mode !== 'offline' && !await getMeta('lastSyncAt')) return getReportOnline(from, to);
-  if (!sales.length && mode !== 'offline') return getReportOnline(from, to);
   return buildLocalReport(from, to, sales, payments, expenses, customers);
 }
 
 export async function getConnectionMode() {
-  return getMeta('connectionMode', 'online');
+  if (connectionModeCache) return connectionModeCache;
+  connectionModeCache = await getMeta('connectionMode', 'online');
+  return connectionModeCache;
 }
 
 export async function setConnectionMode(mode) {
   if (mode !== 'online' && mode !== 'offline') throw new Error('Invalid connection mode.');
-  await setMeta('connectionMode', mode);
+  connectionModeCache = mode;
+  const persistence = setMeta('connectionMode', mode).catch((error) => {
+    console.warn('Could not persist connection mode; the selected mode remains active until the app restarts', error);
+  });
   if (mode === 'online') {
-    const { getOutbox, updateOutbox } = await import('../db');
-    for (const item of await getOutbox()) {
-      if (item.status === 'failed') await updateOutbox(item.id, 'pending');
-    }
-    triggerSync();
+    persistence.then(async () => {
+      if (await selectedMode() !== 'online') return;
+      const { getOutbox, updateOutbox } = await import('../db');
+      for (const item of await getOutbox()) {
+        if (item.status === 'failed') await updateOutbox(item.id, 'pending');
+      }
+      triggerSync({ refresh: true, cacheImages: false });
+    }).catch((error) => console.warn('Could not prepare queued changes for sync', error));
   }
   return mode;
 }
@@ -716,7 +866,7 @@ export async function getBackendAvailability() {
 
 export async function syncNow() {
   const { syncNow: runSync } = await import('../db/sync');
-  return runSync();
+  return runSync({ refresh: true });
 }
 
 export async function retrySync() {
@@ -724,6 +874,23 @@ export async function retrySync() {
   const items = await getOutbox();
   for (const item of items) if (item.status === 'failed') await updateOutbox(item.id, 'pending');
   return syncNow();
+}
+
+export async function bootstrapLocalData() {
+  const [mode, lastSyncAt, products] = await Promise.all([
+    getMeta('connectionMode', 'online'),
+    getMeta('lastSyncAt'),
+    listRecords('products'),
+  ]);
+  if (mode !== 'online' || (lastSyncAt && products.length)) return false;
+  const { syncNow: runSync } = await import('../db/sync');
+  await runSync({ refresh: true, cacheImages: false });
+  return true;
+}
+
+export async function cacheOfflineImages() {
+  const { cacheImagesNow } = await import('../db/sync');
+  return cacheImagesNow();
 }
 
 export async function downloadSnapshot() {

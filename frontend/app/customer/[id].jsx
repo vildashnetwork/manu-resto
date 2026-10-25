@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { ScrollView, View, Text, Alert, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Hero, Card, Btn, Chip, Field, Sheet, Section, Avatar, IconDot, Money, Empty, LoadError, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
+import { Hero, Card, Btn, Chip, Field, Sheet, Section, Avatar, IconDot, Money, Empty, LoadError, useLoad, ScreenShimmer, ScreenRefreshControl, screenStyle, body } from '../../src/components/ui';
 import { getCustomer, getStatement, recordRepayment } from '../../src/api/repo';
 import { fcfa, parseAmount, fmtDateTime, uid } from '../../src/utils';
 import { colors, METHODS, METHOD_ICONS } from '../../src/theme';
@@ -16,7 +16,7 @@ const TYPE = {
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
-  const [d, reload, loading, error] = useLoad(async () => ({ customer: await getCustomer(id), rows: await getStatement(id) }), { deps: [id] });
+  const [d, reload, loading, error, refreshing] = useLoad(async () => ({ customer: await getCustomer(id), rows: await getStatement(id) }), { deps: [id], label: 'Customer details' });
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('Cash');
@@ -26,7 +26,7 @@ export default function CustomerDetail() {
 
   if (loading && !d) return <ScreenShimmer variant="detail" />;
   if (!d && error) return <LoadError error={error} onRetry={reload} />;
-  if (!d?.customer) return <View style={screenStyle} />;
+  if (!d?.customer) return <LoadError error={new Error('Customer data is not available on this device.')} onRetry={() => reload()} />;
   const { customer: c, rows } = d;
   const used = c.credit_limit > 0 ? Math.min(1, Math.max(0, c.balance) / c.credit_limit) : 0;
 
@@ -48,7 +48,11 @@ export default function CustomerDetail() {
   }
 
   return (
-    <ScrollView style={screenStyle} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={screenStyle}
+      showsVerticalScrollIndicator={false}
+      refreshControl={<ScreenRefreshControl refreshing={refreshing} onRefresh={() => reload()} />}
+    >
       <Hero eyebrow={[c.phone, c.code].filter(Boolean).join(' · ') || 'Customer account'} title={c.name} onBack={() => router.back()}>
         <Text style={s.heroLabel}>Outstanding balance</Text>
         <Money value={c.balance} size={38} color={c.balance > 0 ? '#fff' : '#9FE0BC'} style={{ marginTop: 2 }} />

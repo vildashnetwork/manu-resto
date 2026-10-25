@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Btn, Card, Field, Hero, LoadError, ScreenShimmer, useLoad, screenStyle } from '../src/components/ui';
-import { getSettings, updateSettings, getConnectionMode, setConnectionMode } from '../src/api/repo';
+import { Btn, Card, Field, Hero, LoadError, useLoad, ScreenRefreshControl, screenStyle } from '../src/components/ui';
+import { getSettings, updateSettings } from '../src/api/repo';
+import { ConnectionModeContext } from '../src/components/AppNavigation';
 import { colors, radius } from '../src/theme';
 
 const DEFAULT_NOTIFICATIONS = { lowStock: true, creditDebt: true, expenses: true };
@@ -15,20 +16,14 @@ const NOTIFICATION_OPTIONS = [
 
 export default function Settings() {
   const router = useRouter();
-  const [loaded, reload, loading, error] = useLoad(getSettings);
+  const { mode: connectionMode, changeMode: changeConnectionMode } = useContext(ConnectionModeContext);
+  const [loaded, reload, , error, refreshing] = useLoad(getSettings, { label: 'Settings' });
   const [email, setEmail] = useState('');
   const [notifications, setNotifications] = useState(DEFAULT_NOTIFICATIONS);
   const [senderEmail, setSenderEmail] = useState('');
   const [senderConfigured, setSenderConfigured] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [connectionMode, setMode] = useState('online');
   const [modeSaving, setModeSaving] = useState(false);
-
-  useEffect(() => {
-    getConnectionMode().then(setMode).catch((error) => {
-      Alert.alert('Could not load connection mode', error.message || String(error));
-    });
-  }, []);
 
   useEffect(() => {
     if (!loaded) return;
@@ -37,6 +32,18 @@ export default function Settings() {
     setSenderEmail(loaded.senderEmail || '');
     setSenderConfigured(Boolean(loaded.senderConfigured));
   }, [loaded]);
+
+  async function handleModeChange(enabled) {
+    if (modeSaving) return;
+    setModeSaving(true);
+    try {
+      await changeConnectionMode(enabled ? 'online' : 'offline');
+    } catch (error) {
+      Alert.alert('Could not change connection mode', error.message || String(error));
+    } finally {
+      setModeSaving(false);
+    }
+  }
 
   async function save() {
     if (saving) return;
@@ -53,31 +60,21 @@ export default function Settings() {
     } finally {
       setSaving(false);
     }
-
-    async function changeMode(enabled) {
-      if (modeSaving) return;
-      setModeSaving(true);
-      try {
-        const mode = await setConnectionMode(enabled ? 'online' : 'offline');
-        setMode(mode);
-      } catch (error) {
-        Alert.alert('Could not change connection mode', error.message || String(error));
-      } finally {
-        setModeSaving(false);
-      }
-    }
   }
 
-  if (loading && !loaded) return <ScreenShimmer variant="list" />;
-  if (!loaded && error) return <LoadError error={error} onRetry={reload} />;
-
   return (
-    <ScrollView style={screenStyle} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      style={screenStyle}
+      contentContainerStyle={s.content}
+      keyboardShouldPersistTaps="handled"
+      refreshControl={<ScreenRefreshControl refreshing={refreshing} onRefresh={() => reload()} />}
+    >
       <Hero eyebrow="Workspace preferences" title="Settings">
         <Text style={s.heroText}>Manage admin email alerts for your restaurant.</Text>
       </Hero>
 
       <View style={s.body}>
+        {!loaded && error ? <LoadError error={error} onRetry={reload} /> : null}
         <Card>
           <View style={s.option}>
             <View style={s.optionText}>
@@ -90,7 +87,7 @@ export default function Settings() {
             </View>
             <Switch
               value={connectionMode === 'online'}
-              onValueChange={changeMode}
+              onValueChange={handleModeChange}
               disabled={modeSaving}
               trackColor={{ false: colors.line, true: colors.forestMid }}
               thumbColor={connectionMode === 'online' ? colors.forest : '#f4f3f4'}

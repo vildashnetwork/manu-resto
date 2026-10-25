@@ -3,7 +3,7 @@ import { ScrollView, View, Text, Image, Alert, Pressable, StyleSheet, Modal } fr
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import {
-  Hero, Card, Btn, Chip, Field, SearchBox, Sheet, IconDot, Pill, Empty, Fab, LoadError, useLoad, ScreenShimmer, screenStyle, body,
+  Hero, Card, Btn, Chip, Field, SearchBox, Sheet, IconDot, Pill, Empty, Fab, LoadError, useLoad, ScreenShimmer, ScreenRefreshControl, screenStyle, body,
 } from '../../src/components/ui';
 import { getProducts, createProduct, updateProduct, addStockMovement } from '../../src/api/repo';
 import { chooseAndUploadProductImage } from '../../src/api/cloudinary';
@@ -22,7 +22,7 @@ const MOVES = [
 const EMPTY = { name: '', category: 'Meals', unit: '', price: '', cost: '', threshold: '', opening: '', tracked: false, barcode: '' };
 
 export default function Stock() {
-  const [products, reload, loading, error] = useLoad(getProducts);
+  const [products, reload, loading, error, refreshing] = useLoad(getProducts, { label: 'Stock' });
   const [add, setAdd] = useState(false);
   const [editing, setEditing] = useState(null);
   const [f, setF] = useState(EMPTY);
@@ -181,7 +181,12 @@ export default function Stock() {
 
   return (
     <View style={screenStyle}>
-      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 110 }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: 110 }}
+        refreshControl={<ScreenRefreshControl refreshing={refreshing} onRefresh={() => reload()} />}
+      >
         <Hero eyebrow="Menu and inventory" title="Stock">
           <View style={s.heroRow}>
             <View style={s.heroBox}><Text style={s.heroNum}>{allProducts.length}</Text><Text style={s.heroCap}>Products</Text></View>

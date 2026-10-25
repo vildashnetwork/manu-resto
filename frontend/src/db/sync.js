@@ -129,7 +129,7 @@ async function cacheProductImages(onProgress) {
   return failures;
 }
 
-export async function syncNow() {
+export async function syncNow({ refresh = false, cacheImages = false } = {}) {
   if (running) return running;
   running = (async () => {
     if (await getMeta('connectionMode', 'online') !== 'online') {
@@ -138,24 +138,16 @@ export async function syncNow() {
     await setMeta('syncActive', 'true');
     await setMeta('syncError', '');
     try {
-      await setMeta('syncTotal', '1');
-      await setMeta('syncProcessed', '0');
-      await downloadSnapshot();
-      let processed = 1;
       const initialQueue = await getOutbox();
       const pending = [];
       for (const item of initialQueue) {
         if (item.status === 'failed') break;
         if (item.status === 'pending') pending.push(item);
       }
-      const cachedProducts = await listRecords('products');
-      const imageCount = cachedProducts.filter((product) => {
-        const imageUrl = product.imageUrl || product.image_url;
-        return !product.localImageUri && /^https?:\/\//i.test(imageUrl || '');
-      }).length;
-      const total = pending.length + imageCount + 2;
+      const total = pending.length + (refresh ? 1 : 0);
       await setMeta('syncTotal', total);
-      await setMeta('syncProcessed', processed);
+      await setMeta('syncProcessed', '0');
+      let processed = 0;
       for (const item of pending) {
         if (await getMeta('connectionMode', 'online') !== 'online') break;
         try {
@@ -170,13 +162,11 @@ export async function syncNow() {
         }
       }
       if (await getMeta('connectionMode', 'online') === 'online') {
-        await downloadSnapshot();
-        processed += 1;
-        await setMeta('syncProcessed', processed);
-        await cacheProductImages(async () => {
+        if (refresh) {
+          await downloadSnapshot();
           processed += 1;
           await setMeta('syncProcessed', processed);
-        });
+        }
         if (await getMeta('connectionMode', 'online') === 'online') {
           await setMeta('lastSyncAt', Date.now());
         }
@@ -196,6 +186,42 @@ export async function syncNow() {
         setTimeout(() => syncNow().catch((error) => console.warn('Background sync failed', error)), 0);
       }
     }).catch((error) => console.warn('Could not continue background sync', error));
+  });
+  return running;
+}
+
+export async function cacheImagesNow() {
+  if (running) throw new Error('Another synchronization task is running. Try again when it finishes.');
+  if (await getMeta('connectionMode', 'online') !== 'online') {
+    throw new Error('Switch to Online mode to download product images.');
+  }
+  running = (async () => {
+    await setMeta('syncActive', 'true');
+    await setMeta('syncError', '');
+    try {
+      const products = await listRecords('products');
+      const eligible = products.filter((product) => {
+        const imageUrl = product.imageUrl || product.image_url;
+        return !product.localImageUri && /^https?:\/\//i.test(imageUrl || '');
+      });
+      await setMeta('syncTotal', eligible.length);
+      await setMeta('syncProcessed', '0');
+      const failures = await cacheProductImages(async () => {
+        const completed = Number(await getMeta('syncProcessed', '0')) + 1;
+        await setMeta('syncProcessed', completed);
+      });
+      if (failures > 0) {
+        throw new Error(`${failures} product image(s) could not be downloaded. Check your connection and try again.`);
+      }
+      return { cached: eligible.length };
+    } catch (error) {
+      await setMeta('syncError', error.message || String(error));
+      throw error;
+    } finally {
+      await setMeta('syncActive', 'false');
+    }
+  })().finally(() => {
+    running = null;
   });
   return running;
 }

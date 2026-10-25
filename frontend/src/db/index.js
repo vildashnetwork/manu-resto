@@ -1,6 +1,13 @@
 import * as SQLite from 'expo-sqlite';
 
 let databasePromise;
+let writeQueue = Promise.resolve();
+
+function serializeWrite(operation) {
+  const result = writeQueue.then(operation);
+  writeQueue = result.catch(() => {});
+  return result;
+}
 
 export async function database() {
   if (!databasePromise) {
@@ -8,6 +15,7 @@ export async function database() {
       const db = await SQLite.openDatabaseAsync('manus-resto.db');
       await db.execAsync(`
         PRAGMA journal_mode = WAL;
+        PRAGMA busy_timeout = 5000;
         CREATE TABLE IF NOT EXISTS records (
           type TEXT NOT NULL,
           id TEXT NOT NULL,
@@ -45,29 +53,52 @@ export async function database() {
 
 export async function putRecord(type, record) {
   if (!record?.id) throw new Error(`Cannot store ${type} without an id.`);
-  const db = await database();
-  await db.runAsync(
-    'INSERT INTO records(type, id, data, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(type, id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at',
-    type, String(record.id), JSON.stringify(record), Date.now()
-  );
+  return serializeWrite(async () => {
+    const db = await database();
+    await db.runAsync(
+      'INSERT INTO records(type, id, data, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(type, id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at',
+      type, String(record.id), JSON.stringify(record), Date.now()
+    );
+  });
+}
+
+export async function putRecords(type, records) {
+  if (!records.length) return;
+  return serializeWrite(async () => {
+    const db = await database();
+    for (let offset = 0; offset < records.length; offset += 50) {
+      const batch = records.slice(offset, offset + 50);
+      await db.withExclusiveTransactionAsync(async (tx) => {
+        for (const record of batch) {
+          if (!record?.id) throw new Error(`Cannot store ${type} without an id.`);
+          await tx.runAsync(
+            'INSERT INTO records(type, id, data, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(type, id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at',
+            type, String(record.id), JSON.stringify(record), Date.now()
+          );
+        }
+      });
+    }
+  });
 }
 
 export async function commitLocalChanges(records, operation) {
-  const db = await database();
-  await db.withExclusiveTransactionAsync(async (tx) => {
-    for (const { type, record } of records) {
-      if (!record?.id) throw new Error(`Cannot store ${type} without an id.`);
-      await tx.runAsync(
-        'INSERT INTO records(type, id, data, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(type, id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at',
-        type, String(record.id), JSON.stringify(record), Date.now()
-      );
-    }
-    if (operation) {
-      await tx.runAsync(
-        'INSERT INTO outbox(id, type, payload, created_at) VALUES(?, ?, ?, ?)',
-        operation.id, operation.type, JSON.stringify(operation.payload), Date.now()
-      );
-    }
+  return serializeWrite(async () => {
+    const db = await database();
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      for (const { type, record } of records) {
+        if (!record?.id) throw new Error(`Cannot store ${type} without an id.`);
+        await tx.runAsync(
+          'INSERT INTO records(type, id, data, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(type, id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at',
+          type, String(record.id), JSON.stringify(record), Date.now()
+        );
+      }
+      if (operation) {
+        await tx.runAsync(
+          'INSERT INTO outbox(id, type, payload, created_at) VALUES(?, ?, ?, ?)',
+          operation.id, operation.type, JSON.stringify(operation.payload), Date.now()
+        );
+      }
+    });
   });
 }
 
@@ -84,17 +115,21 @@ export async function listRecords(type) {
 }
 
 export async function deleteRecord(type, id) {
-  const db = await database();
-  await db.runAsync('DELETE FROM records WHERE type = ? AND id = ?', type, String(id));
+  return serializeWrite(async () => {
+    const db = await database();
+    await db.runAsync('DELETE FROM records WHERE type = ? AND id = ?', type, String(id));
+  });
 }
 
 export async function enqueue(type, payload, id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2)}`) {
-  const db = await database();
-  await db.runAsync(
-    'INSERT INTO outbox(id, type, payload, created_at) VALUES(?, ?, ?, ?)',
-    id, type, JSON.stringify(payload), Date.now()
-  );
-  return id;
+  return serializeWrite(async () => {
+    const db = await database();
+    await db.runAsync(
+      'INSERT INTO outbox(id, type, payload, created_at) VALUES(?, ?, ?, ?)',
+      id, type, JSON.stringify(payload), Date.now()
+    );
+    return id;
+  });
 }
 
 export async function getOutbox() {
@@ -104,13 +139,17 @@ export async function getOutbox() {
 }
 
 export async function updateOutbox(id, status, error = null) {
-  const db = await database();
-  await db.runAsync('UPDATE outbox SET status = ?, error = ? WHERE id = ?', status, error, id);
+  return serializeWrite(async () => {
+    const db = await database();
+    await db.runAsync('UPDATE outbox SET status = ?, error = ? WHERE id = ?', status, error, id);
+  });
 }
 
 export async function removeOutbox(id) {
-  const db = await database();
-  await db.runAsync('DELETE FROM outbox WHERE id = ?', id);
+  return serializeWrite(async () => {
+    const db = await database();
+    await db.runAsync('DELETE FROM outbox WHERE id = ?', id);
+  });
 }
 
 export async function getMeta(key, fallback = null) {
@@ -120,19 +159,23 @@ export async function getMeta(key, fallback = null) {
 }
 
 export async function setMeta(key, value) {
-  const db = await database();
-  await db.runAsync(
-    'INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-    key, String(value)
-  );
+  return serializeWrite(async () => {
+    const db = await database();
+    await db.runAsync(
+      'INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+      key, String(value)
+    );
+  });
 }
 
 export async function mapId(localId, remoteId) {
-  const db = await database();
-  await db.runAsync(
-    'INSERT INTO id_map(local_id, remote_id) VALUES(?, ?) ON CONFLICT(local_id) DO UPDATE SET remote_id=excluded.remote_id',
-    String(localId), String(remoteId)
-  );
+  return serializeWrite(async () => {
+    const db = await database();
+    await db.runAsync(
+      'INSERT INTO id_map(local_id, remote_id) VALUES(?, ?) ON CONFLICT(local_id) DO UPDATE SET remote_id=excluded.remote_id',
+      String(localId), String(remoteId)
+    );
+  });
 }
 
 export async function resolveId(id) {
@@ -142,7 +185,7 @@ export async function resolveId(id) {
   return row?.remote_id || String(id);
 }
 
-export async function replaceRemoteSnapshot(snapshot) {
+async function replaceRemoteSnapshotUnsafe(snapshot) {
   const db = await database();
   const outbox = await getOutbox();
   const identityRows = await db.getAllAsync('SELECT local_id, remote_id FROM id_map');
@@ -212,6 +255,7 @@ export async function replaceRemoteSnapshot(snapshot) {
           if (payload[key]?.id) currentPendingIds.add(String(payload[key].id));
         }
       }
+
       for (const { type, translated, localId, remoteId } of batch) {
         if (currentPendingIds.has(remoteId) || (localId && currentPendingIds.has(localId))) continue;
         const existing = localId
@@ -226,4 +270,8 @@ export async function replaceRemoteSnapshot(snapshot) {
       }
     });
   }
+}
+
+export function replaceRemoteSnapshot(snapshot) {
+  return serializeWrite(() => replaceRemoteSnapshotUnsafe(snapshot));
 }

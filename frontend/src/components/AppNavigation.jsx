@@ -1,11 +1,16 @@
-import React from 'react';
-import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useContext, useState } from 'react';
+import { Alert, Image, Modal, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, radius } from '../theme';
 
 export const DrawerContext = React.createContext(() => {});
+export const ConnectionModeContext = React.createContext({
+  mode: 'online',
+  ready: false,
+  changeMode: async () => {},
+});
 
 const LINKS = [
   { label: 'Home', path: '/', icon: 'home-outline' },
@@ -40,6 +45,57 @@ export function MenuButton({ onPress }) {
   );
 }
 
+export function ConnectionModeToggle({ compact = false }) {
+  const { mode, changeMode } = useContext(ConnectionModeContext);
+  const [saving, setSaving] = useState(false);
+  const online = mode === 'online';
+
+  async function toggle() {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await changeMode(online ? 'offline' : 'online');
+    } catch (error) {
+      Alert.alert('Could not change connection mode', error.message || String(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (compact) {
+    return (
+      <Pressable
+        onPress={toggle}
+        disabled={saving}
+        accessibilityRole="switch"
+        accessibilityState={{ checked: online, disabled: saving }}
+        accessibilityLabel={`Connection mode ${online ? 'online' : 'offline'}`}
+        style={[s.modeCompact, online ? s.modeCompactOnline : s.modeCompactOffline, saving && s.modeDisabled]}
+      >
+        <Ionicons name={online ? 'cloud-outline' : 'cloud-offline-outline'} size={15} color="#fff" />
+        <Text style={s.modeCompactText}>{online ? 'Online' : 'Offline'}</Text>
+      </Pressable>
+    );
+  }
+
+  return (
+    <View style={s.modePanel}>
+      <View style={s.modeText}>
+        <Text style={s.modeTitle}>Connection mode</Text>
+        <Text style={s.modeDetail}>{online ? 'Sync with the backend' : 'Use saved device data'}</Text>
+      </View>
+      <Switch
+        value={online}
+        onValueChange={toggle}
+        disabled={saving}
+        trackColor={{ false: '#69776E', true: colors.gold }}
+        thumbColor={online ? colors.forestDark : '#E1E9E2'}
+        accessibilityLabel="Online mode"
+      />
+    </View>
+  );
+}
+
 export function AppDrawer({ visible, onClose }) {
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
@@ -64,6 +120,8 @@ export function AppDrawer({ visible, onClose }) {
               <Ionicons name="close" size={24} color="#fff" />
             </Pressable>
           </View>
+
+          <ConnectionModeToggle />
 
           <Text style={s.menuCaption}>WORKSPACE</Text>
           <View style={s.links}>
@@ -121,4 +179,13 @@ const s = StyleSheet.create({
   headerLogo: { width: 34, height: 34 },
   headerName: { color: '#fff', fontSize: 16, fontWeight: '800' },
   menuButton: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
+  modeCompact: { minWidth: 82, height: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderRadius: 17, paddingHorizontal: 10, marginRight: 10 },
+  modeCompactOnline: { backgroundColor: '#2D6548' },
+  modeCompactOffline: { backgroundColor: '#6B5940' },
+  modeCompactText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+  modeDisabled: { opacity: 0.6 },
+  modePanel: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 13, paddingVertical: 11, marginTop: 15, borderRadius: radius.md, backgroundColor: 'rgba(255,255,255,0.09)' },
+  modeText: { flex: 1 },
+  modeTitle: { color: '#fff', fontSize: 13, fontWeight: '800' },
+  modeDetail: { color: '#C4D0C7', fontSize: 11, marginTop: 3 },
 });

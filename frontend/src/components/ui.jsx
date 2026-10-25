@@ -1,23 +1,27 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, TextInput, Pressable, Modal, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, Animated,
+  View, Text, TextInput, Pressable, Modal, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, Animated, RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, radius } from '../theme';
 import { fcfa } from '../utils';
+import { ConnectionModeContext } from './AppNavigation';
 
 // Loads data once on mount and returns [data, reload, loading, error].
 // An abortable timeout prevents the shimmer from being stuck forever when the
 // backend / database is slow or unreachable. Errors are surfaced as state
 // (never a blocking alert) so screens can show an inline retry instead of a
 // frozen shimmer. Cached data is returned immediately so screens feel instant.
-export function useLoad(loader, { timeoutMs = 15000, deps } = {}) {
+export function useLoad(loader, { timeoutMs = 15000, deps, label = 'screen' } = {}) {
+  const { mode } = useContext(ConnectionModeContext);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const mounted = useRef(true);
   const abortRef = useRef(null);
   const timerRef = useRef(null);
+  const requestIdRef = useRef(0);
   const loaderRef = useRef(loader);
   const dataRef = useRef(data);
 
@@ -32,51 +36,63 @@ export function useLoad(loader, { timeoutMs = 15000, deps } = {}) {
     }
   }, []);
 
-  const run = useCallback(async () => {
+  const run = useCallback(async (options = {}) => {
+    const requestId = ++requestIdRef.current;
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
     clearTimer();
     let resolved = false;
+    const hasData = Boolean(dataRef.current);
+    if (__DEV__ && options.silent !== true) console.info(`[screen-load] ${label}: started`);
 
     if (timeoutMs) {
       timerRef.current = setTimeout(() => {
+        if (requestIdRef.current !== requestId) return;
         resolved = true;
         controller.abort();
         if (mounted.current) {
-          if (!dataRef.current) setError(new Error('Loading timed out. Check your connection or try again.'));
+          const timeoutError = new Error(`Data request timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+          console.warn(`[screen-load] ${label}: timed out`, timeoutError);
+          if (!dataRef.current) setError(timeoutError);
           setLoading(false);
+          setRefreshing(false);
         }
       }, timeoutMs);
     }
 
-    setLoading(true);
+    setLoading(!hasData);
+    setRefreshing(hasData && options.silent !== true);
     try {
       const result = await loaderRef.current();
-      if (controller.signal.aborted || !mounted.current) return;
+      if (requestIdRef.current !== requestId || controller.signal.aborted || !mounted.current) return;
       clearTimer();
       setData(result);
       setError(null);
+      if (__DEV__ && options.silent !== true) console.info(`[screen-load] ${label}: completed`);
     } catch (e) {
-      if (!mounted.current) return;
+      if (requestIdRef.current !== requestId || !mounted.current) return;
       if (controller.signal.aborted) {
         if (!resolved) {
           if (!dataRef.current) setError(e);
           setLoading(false);
+          setRefreshing(false);
         }
         return;
       }
       clearTimer();
       resolved = true;
-      console.warn('load failed', e);
+      console.warn(`[screen-load] ${label}: failed`, e);
       setError(e);
       setLoading(false);
+      setRefreshing(false);
     } finally {
-      if (!resolved && mounted.current && !controller.signal.aborted) {
+      if (requestIdRef.current === requestId && !resolved && mounted.current && !controller.signal.aborted) {
         setLoading(false);
       }
+      if (requestIdRef.current === requestId && mounted.current) setRefreshing(false);
     }
-  }, [timeoutMs, clearTimer]);
+  }, [timeoutMs, clearTimer, label]);
 
   const depList = deps ?? [];
   useEffect(() => {
@@ -84,13 +100,25 @@ export function useLoad(loader, { timeoutMs = 15000, deps } = {}) {
     run();
     return () => {
       mounted.current = false;
+      requestIdRef.current += 1;
       clearTimer();
       if (abortRef.current) abortRef.current.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run, clearTimer, ...depList]);
+  }, [run, clearTimer, mode, ...depList]);
 
-  return [data, run, loading, error];
+  return [data, run, loading, error, refreshing];
+}
+
+export function ScreenRefreshControl({ refreshing, onRefresh }) {
+  return (
+    <RefreshControl
+      refreshing={refreshing}
+      onRefresh={onRefresh}
+      colors={[colors.forest]}
+      tintColor={colors.forest}
+    />
+  );
 }
 
 // Inline error state with a retry button (replaces blocking alerts / frozen shimmer).
@@ -131,6 +159,7 @@ export function ScreenShimmer({ variant = 'list' }) {
   return (
     <ScrollView style={screenStyle} contentContainerStyle={{ paddingBottom: 32 }} showsVerticalScrollIndicator={false}>
       <View style={s.shimmerHero}>
+        <Text style={s.loadingLabel}>Loading your data…</Text>
         <ShimmerBlock width={120} height={11} style={{ marginBottom: 12 }} />
         <ShimmerBlock width="62%" height={30} style={{ marginBottom: 20 }} />
         {variant === 'dashboard' || variant === 'reports' ? (
@@ -486,6 +515,7 @@ const s = StyleSheet.create({
   segmentText: { color: colors.muted, fontSize: 13, fontWeight: '600' },
   segmentTextActive: { color: colors.forest, fontWeight: '800' },
   shimmerHero: { backgroundColor: colors.forest, paddingHorizontal: 18, paddingTop: 24, paddingBottom: 22, borderBottomLeftRadius: 22, borderBottomRightRadius: 22 },
+  loadingLabel: { color: '#fff', fontSize: 13, fontWeight: '700', marginBottom: 12 },
   shimmerContent: { padding: 16 },
   shimmerCard: { padding: 16, marginBottom: 14, borderRadius: radius.lg, backgroundColor: '#fff', borderWidth: 1, borderColor: colors.line },
   shimmerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, marginBottom: 10, borderRadius: radius.md, backgroundColor: '#fff' },

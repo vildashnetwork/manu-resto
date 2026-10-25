@@ -4,14 +4,47 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Btn } from '../src/components/ui';
-import { AppDrawer, DrawerContext, HeaderBrandTitle, MenuButton } from '../src/components/AppNavigation';
-import { getConnectionMode, syncNow } from '../src/api/repo';
+import {
+  AppDrawer, ConnectionModeContext, ConnectionModeToggle, DrawerContext, HeaderBrandTitle, MenuButton,
+} from '../src/components/AppNavigation';
+import { bootstrapLocalData, getConnectionMode, setConnectionMode } from '../src/api/repo';
 import { colors } from '../src/theme';
+
+class ScreenErrorBoundary extends React.Component {
+  state = { error: null, resetKey: 0 };
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('[screen-render] Screen crashed', error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <View style={{ flex: 1, backgroundColor: colors.cream, justifyContent: 'center', padding: 24 }}>
+          <Text style={{ color: colors.danger, fontSize: 20, fontWeight: '800', marginBottom: 10 }}>This screen could not open</Text>
+          <Text style={{ color: colors.ink, lineHeight: 21, marginBottom: 18 }}>{this.state.error.message || String(this.state.error)}</Text>
+          <Btn
+            title="Reload screen"
+            onPress={() => this.setState((state) => ({ error: null, resetKey: state.resetKey + 1 }))}
+          />
+        </View>
+      );
+    }
+    return <React.Fragment key={this.state.resetKey}>{this.props.children}</React.Fragment>;
+  }
+}
 
 export default function RootLayout() {
   const [locked, setLocked] = useState(Platform.OS !== 'web');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [lockMessage, setLockMessage] = useState('');
+  const [connectionMode, setMode] = useState('online');
+  const [modeReady, setModeReady] = useState(false);
+  const modeChangeVersion = useRef(0);
   const authenticating = useRef(false);
   const wasBackgrounded = useRef(false);
 
@@ -58,20 +91,44 @@ export default function RootLayout() {
   }, [unlock]);
 
   useEffect(() => {
+    let mounted = true;
+    const initialVersion = modeChangeVersion.current;
     getConnectionMode().then((mode) => {
-      if (mode === 'online') syncNow().catch((error) => console.warn('Background sync failed', error));
-    }).catch((error) => console.warn('Could not initialize local storage', error));
+      if (mounted && modeChangeVersion.current === initialVersion) setMode(mode);
+    }).catch((error) => {
+      console.warn('Could not load connection mode', error);
+    }).finally(() => {
+      if (mounted) setModeReady(true);
+    });
+    return () => { mounted = false; };
+  }, []);
+
+  const changeConnectionMode = useCallback(async (mode) => {
+    modeChangeVersion.current += 1;
+    setMode(mode);
+    const savedMode = await setConnectionMode(mode);
+    return savedMode;
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      bootstrapLocalData().catch((error) => console.warn('Background data bootstrap failed', error));
+    }, 5000);
+    return () => clearTimeout(timer);
   }, []);
 
   return (
     <>
       <StatusBar style="light" />
-      <DrawerContext.Provider value={() => setDrawerOpen(true)}>
-        <Stack
+      <ConnectionModeContext.Provider value={{ mode: connectionMode, ready: modeReady, changeMode: changeConnectionMode }}>
+        <DrawerContext.Provider value={() => setDrawerOpen(true)}>
+          <ScreenErrorBoundary>
+          <Stack
           screenOptions={{
             headerStyle: { backgroundColor: colors.forest },
             headerTintColor: '#fff',
             headerTitleStyle: { fontWeight: '700' },
+            headerRight: () => <ConnectionModeToggle compact />,
             contentStyle: { backgroundColor: colors.cream },
           }}
         >
@@ -102,9 +159,11 @@ export default function RootLayout() {
               headerLeft: () => <MenuButton onPress={() => setDrawerOpen(true)} />,
             }}
           />
-        </Stack>
+          </Stack>
+          </ScreenErrorBoundary>
         <AppDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
-      </DrawerContext.Provider>
+        </DrawerContext.Provider>
+      </ConnectionModeContext.Provider>
       {locked && Platform.OS !== 'web' && (
         <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.forest, justifyContent: 'center', padding: 28 }}>
           <Image

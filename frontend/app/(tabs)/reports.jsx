@@ -3,7 +3,7 @@ import { ScrollView, View, Text, Alert, Pressable, StyleSheet } from 'react-nati
 import { Ionicons } from '@expo/vector-icons';
 import {
   Hero, Card, Btn, Chip, Field, Sheet, Row, Section, Segmented, Stat, IconDot, Pill, Money, Empty,
-  useLoad, ScreenShimmer, screenStyle, body,
+  LoadError, useLoad, ScreenShimmer, ScreenRefreshControl, screenStyle, body,
 } from '../../src/components/ui';
 import DateRangeSheet, { PRESETS, presetFor, rangeLabel, dayEnd } from '../../src/components/DateRangeSheet';
 import { getReport, getRecentSales, addExpense, cancelSale, updateSalePayment } from '../../src/api/repo';
@@ -34,12 +34,12 @@ function Mini({ label, value }) {
 export default function Reports() {
   const [range, setRange] = useState(() => { const [a, b] = PRESETS.Today(); return { from: a, to: b }; });
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [d, reload, loading, error] = useLoad(async () => {
+  const [d, reload, loading, error, refreshing] = useLoad(async () => {
     const from = range.from;
     const to = dayEnd(range.to);
     const [report, sales] = await Promise.all([getReport(from, to), getRecentSales(100, from, to)]);
     return { report, sales };
-  }, { deps: [range.from, range.to] });
+  }, { deps: [range.from, range.to], label: 'Reports' });
 
   const [expOpen, setExpOpen] = useState(false);
   const [expCat, setExpCat] = useState('Supplies');
@@ -103,9 +103,16 @@ export default function Reports() {
   const paidShare = r && r.totalSales > 0 ? Math.round(((r.totalSales - r.creditSales) / r.totalSales) * 100) : 0;
 
   if (loading && !d) return <ScreenShimmer variant="reports" />;
+  if (!d && error) return <LoadError error={error} onRetry={() => reload()} />;
+  if (!d) return <LoadError error={new Error('Report data is not available yet. Try loading again.')} onRetry={() => reload()} />;
 
   return (
-    <ScrollView style={screenStyle} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      style={screenStyle}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      refreshControl={<ScreenRefreshControl refreshing={refreshing} onRefresh={() => reload()} />}
+    >
       <Hero eyebrow="Business summary" title="Reports">
         <Pressable onPress={() => setPickerOpen(true)} style={({ pressed }) => [s.rangeBtn, { opacity: pressed ? 0.85 : 1 }]}>
           <Ionicons name="calendar" size={18} color={colors.gold} />

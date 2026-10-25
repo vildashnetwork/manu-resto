@@ -2,7 +2,7 @@ import React from 'react';
 import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Hero, Card, Money, Pill, Row, Section, Empty, IconDot, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
+import { Hero, Card, Money, Pill, Row, Section, Empty, IconDot, LoadError, useLoad, ScreenShimmer, ScreenRefreshControl, screenStyle, body } from '../../src/components/ui';
 import { getReport, getRecentSales, getProducts } from '../../src/api/repo';
 import { fcfa, startOfDay, fmtDateTime } from '../../src/utils';
 import { colors, radius, shadow } from '../../src/theme';
@@ -32,20 +32,25 @@ function Mini({ label, value }) {
 
 export default function Home() {
   const router = useRouter();
-  const [d, , loading] = useLoad(async () => {
+  const [d, reload, loading, error, refreshing] = useLoad(async () => {
     const from = startOfDay();
     const to = Date.now();
     const [report, recent, products] = await Promise.all([getReport(from, to), getRecentSales(6, from, to), getProducts()]);
     const low = products.filter((p) => p.tracked && p.low_stock_threshold > 0 && p.stock <= p.low_stock_threshold);
     return { report, recent, low };
-  });
+  }, { label: 'Dashboard' });
 
   if (loading && !d) return <ScreenShimmer variant="dashboard" />;
-  if (!d) return <View style={screenStyle} />;
+  if (!d && error) return <LoadError error={error} onRetry={() => reload()} />;
+  if (!d) return <LoadError error={new Error('Dashboard data is not available yet. Try loading again.')} onRetry={() => reload()} />;
   const { report: r, recent, low } = d;
 
   return (
-    <ScrollView style={screenStyle} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={screenStyle}
+      showsVerticalScrollIndicator={false}
+      refreshControl={<ScreenRefreshControl refreshing={refreshing} onRefresh={() => reload()} />}
+    >
       <Hero eyebrow={`${greeting()} 👋`} title="Manu's Resto">
         <Text style={s.heroLabel}>Today's sales · {r.salesCount} {r.salesCount === 1 ? 'sale' : 'sales'}</Text>
         <Money value={r.totalSales} size={40} color="#fff" style={{ marginTop: 2 }} />

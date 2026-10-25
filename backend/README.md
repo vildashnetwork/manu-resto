@@ -10,7 +10,31 @@ Express and MongoDB backend for the Expo frontend in `../frontend`.
 4. Start the server with `npm run dev` (or `npm start`).
 5. Check `http://localhost:3000/api/health`.
 
-The frontend uses `https://manu.onrender.com/api` by default. For local development set `EXPO_PUBLIC_API_URL=http://localhost:3000/api` in the frontend environment.
+The frontend currently uses `https://manu-ltx7.onrender.com/api`. For local development set `EXPO_PUBLIC_API_URL=http://localhost:3000/api` in the frontend environment.
+
+## Seed mock drinks
+
+`data/mock-drinks.json` is an example catalog with drink images, sample FCFA retail prices, and 12 opening units per product. The names and images are based on public beverage catalogs where available; prices are mock values, not verified current shop prices. “Planet Energy Drink” is a mock catalog entry and should be replaced if it does not match the actual product you sell.
+
+The seed script targets `https://manu-ltx7.onrender.com/api` by default. Review the list and preview its actions first:
+
+```bash
+npm run seed:drinks -- --dry-run
+npm run seed:drinks -- --yes
+```
+
+It skips exact product-name matches already returned by `GET /products`, uploads each new product through `POST /products`, and stops on API read errors. Set `API_BASE_URL` to use another API deployment. The current API does not store manufacturer barcodes, so this sample does not make package barcode scanning available.
+
+## Seed mock meals
+
+`data/mock-meals.json` contains Achu with Yellow Soup, Fufu and Vegetables, Conchaf Rice, Eru, and Water Fufu. The images and FCFA prices are mock examples; confirm them against your actual menu before using them for sales. Each new meal is tracked with 12 opening plates.
+
+```bash
+npm run seed:meals -- --dry-run
+npm run seed:meals -- --yes
+```
+
+The uploader uses `API_BASE_URL` or defaults to `https://manu-ltx7.onrender.com/api`, skips exact product-name matches, and sends products to `POST /products`.
 
 ## Endpoints
 

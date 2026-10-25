@@ -1,0 +1,303 @@
+[
+  {
+    "name": "33 Export (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 700,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/01/33.png"
+  },
+  {
+    "name": "Beaufort Lager (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 700,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/01/beaufort-lager.png"
+  },
+  {
+    "name": "Beaufort Light (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 700,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/02/beaufort-light.png"
+  },
+  {
+    "name": "Castel Beer (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 650,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/02/cantel.png"
+  },
+  {
+    "name": "Manyan 50cl (sample)",
+    "category": "Drinks",
+    "unit": "can",
+    "price": 625,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/02/manyan.png"
+  },
+  {
+    "name": "Mützig (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 750,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/02/mutsic.png"
+  },
+  {
+    "name": "Heineken (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 900,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/02/heineken.png"
+  },
+  {
+    "name": "Isenbeck (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 700,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/02/isenberg.png"
+  },
+  {
+    "name": "Doppel Munich (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 700,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/doppel.png"
+  },
+  {
+    "name": "Doppel Munich Lager (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 700,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/doppel.png"
+  },
+  {
+    "name": "Castle Milk Stout (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 750,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/01/CASTLE-milk-stout-1.webp"
+  },
+  {
+    "name": "Booster Mangue Orange (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 700,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2026/08/BMO-web.png"
+  },
+  {
+    "name": "Djino Mangue-Goyave 60cl (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 500,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/07/djino-mangue-goyave-60cl.png"
+  },
+  {
+    "name": "Top Soda (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 400,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2025/07/soda.png"
+  },
+  {
+    "name": "Top Grenadine (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 400,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/top-grenadine.png"
+  },
+  {
+    "name": "Top Tonic (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 400,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/tonic.png"
+  },
+  {
+    "name": "Top Orange (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 400,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/top-orange.png"
+  },
+  {
+    "name": "Top Pamplemousse (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 400,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/top-pamplemous.png"
+  },
+  {
+    "name": "Top Ananas (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 400,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/top-ananas.png"
+  },
+  {
+    "name": "XXL (sample)",
+    "category": "Drinks",
+    "unit": "can",
+    "price": 600,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/04/Groupe-260.webp"
+  },
+  {
+    "name": "Malta Tonic (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 500,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/04/Malta-T.webp"
+  },
+  {
+    "name": "Vitale Water (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 300,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/vitale.png"
+  },
+  {
+    "name": "Aquabelle Water (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 300,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/aqua-belle.png"
+  },
+  {
+    "name": "Tangui Water 1L (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 500,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/tangui-1l.png"
+  },
+  {
+    "name": "Tangui Water 1.3L (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 600,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/tangui-13l.png"
+  },
+  {
+    "name": "Booster Gin Tonic (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 700,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/booster-GIN-TONIC.png"
+  },
+  {
+    "name": "Booster Whisky Cola (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 700,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/booster-whisky-cola.png"
+  },
+  {
+    "name": "Chill (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 700,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/chill.png"
+  },
+  {
+    "name": "Youzou (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 400,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/youzou.png"
+  },
+  {
+    "name": "World Cola (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 400,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/word-cola-50cl.png"
+  },
+  {
+    "name": "Orangina (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 500,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/orangina.png"
+  },
+  {
+    "name": "Vimto (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 500,
+    "imageUrl": "https://boissonsducameroun.com/wp-content/uploads/2024/03/vinto.png"
+  },
+  {
+    "name": "Planet Energy Drink (mock)",
+    "category": "Drinks",
+    "unit": "can",
+    "price": 500,
+    "imageUrl": "https://images.unsplash.com/photo-1622543925917-763c34d1a86e?auto=format&fit=crop&w=600&q=80"
+  },
+  {
+    "name": "Kadji Beer (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 650,
+    "imageUrl": "https://www.kadjigroup.com/wp-content/uploads/2023/06/kadji-beer-product-image.jpg.webp"
+  },
+  {
+    "name": "K44 Beer (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 700,
+    "imageUrl": "https://www.kadjigroup.com/wp-content/uploads/2023/06/k44-beer-main.jpg.webp"
+  },
+  {
+    "name": "King Beer (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 650,
+    "imageUrl": "https://www.kadjigroup.com/wp-content/uploads/2023/06/kadji-beer-product-image.jpg.webp"
+  },
+  {
+    "name": "Spécial Pamplemousse (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 400,
+    "imageUrl": "https://www.kadjigroup.com/wp-content/uploads/2023/07/Kadji-Products-1-1024x638.jpg"
+  },
+  {
+    "name": "Spécial Limonade (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 400,
+    "imageUrl": "https://www.kadjigroup.com/wp-content/uploads/2023/07/Kadji-Products-1-1024x638.jpg"
+  },
+  {
+    "name": "Spécial Cola (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 400,
+    "imageUrl": "https://www.kadjigroup.com/wp-content/uploads/2023/07/Kadji-Products-1-1024x638.jpg"
+  },
+  {
+    "name": "Spécial Grenadine (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 400,
+    "imageUrl": "https://www.kadjigroup.com/wp-content/uploads/2023/07/Kadji-Products-1-1024x638.jpg"
+  },
+  {
+    "name": "Spécial Orange (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 400,
+    "imageUrl": "https://www.kadjigroup.com/wp-content/uploads/2023/07/Kadji-Products-1-1024x638.jpg"
+  },
+  {
+    "name": "Madiba Water 50cl (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 250,
+    "imageUrl": "https://www.kadjigroup.com/wp-content/uploads/2023/07/Kadji-Products-2-1024x638.jpg"
+  },
+  {
+    "name": "Madiba Water 1.5L (sample)",
+    "category": "Drinks",
+    "unit": "bottle",
+    "price": 500,
+    "imageUrl": "https://www.kadjigroup.com/wp-content/uploads/2023/07/Kadji-Products-2-1024x638.jpg"
+  }
+]

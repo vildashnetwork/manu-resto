@@ -10,6 +10,7 @@ const productSchema = new Schema({
   price: { type: Number, required: true, min: 1 },
   cost: { type: Number, default: 0, min: 0 },
   lowStockThreshold: { type: Number, default: 0, min: 0 },
+  barcode: { type: String, default: null, trim: true },
   tracked: { type: Boolean, default: false },
   stock: { type: Number, default: 0, min: 0 },
   imageUrl: { type: String, required: true },
@@ -72,6 +73,14 @@ const paymentSchema = new Schema({
   created_at: { type: Number, default: Date.now, index: true },
 }, options);
 
+const saleAdjustmentSchema = new Schema({
+  saleId: { type: Schema.Types.ObjectId, ref: 'Sale', required: true, index: true },
+  idempotencyKey: { type: String, required: true, unique: true },
+  paidAmount: { type: Number, required: true, min: 0 },
+  method: { type: String, default: null },
+  created_at: { type: Number, default: Date.now, index: true },
+}, options);
+
 const ledgerSchema = new Schema({
   customerId: { type: Schema.Types.ObjectId, ref: 'Customer', required: true, index: true },
   type: { type: String, enum: ['opening', 'credit_sale', 'payment', 'reversal'], required: true },
@@ -95,5 +104,6 @@ export const Customer = mongoose.models.Customer || mongoose.model('Customer', c
 export const StockMovement = mongoose.models.StockMovement || mongoose.model('StockMovement', stockMovementSchema);
 export const Sale = mongoose.models.Sale || mongoose.model('Sale', saleSchema);
 export const Payment = mongoose.models.Payment || mongoose.model('Payment', paymentSchema);
+export const SaleAdjustment = mongoose.models.SaleAdjustment || mongoose.model('SaleAdjustment', saleAdjustmentSchema);
 export const Ledger = mongoose.models.Ledger || mongoose.model('Ledger', ledgerSchema);
 export const Expense = mongoose.models.Expense || mongoose.model('Expense', expenseSchema);

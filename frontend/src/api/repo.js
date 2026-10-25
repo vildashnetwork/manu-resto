@@ -54,6 +54,7 @@ function normalizeProduct(product) {
     id: String(product.id ?? product._id),
     low_stock_threshold: product.low_stock_threshold ?? product.lowStockThreshold ?? product.threshold ?? 0,
     image_url: product.image_url ?? product.imageUrl ?? product.image ?? '',
+    barcode: product.barcode ?? '',
     tracked: Boolean(product.tracked),
   };
 }
@@ -75,6 +76,7 @@ function normalizeSale(sale) {
     paid_amount: sale.paid_amount ?? sale.paidAmount,
     credit_amount: sale.credit_amount ?? sale.creditAmount,
     created_at: sale.created_at ?? sale.createdAt,
+    items: Array.isArray(sale.items) ? sale.items : [],
   };
 }
 
@@ -96,12 +98,23 @@ export async function createProduct(product) {
     tracked: Boolean(product.tracked),
     openingStock: product.openingStock || 0,
     imageUrl: product.imageUrl,
+    barcode: product.barcode?.trim() || null,
   }), 'product');
   return normalizeProduct(result).id;
 }
 
-export async function updateProductPrice(productId, price, cost) {
-  return entity(await put(`/products/${encodeURIComponent(productId)}`, { price, cost }), 'product');
+export async function updateProduct(productId, product) {
+  const result = entity(await put(`/products/${encodeURIComponent(productId)}`, {
+    name: product.name.trim(),
+    category: product.category,
+    unit: product.unit,
+    price: product.price,
+    cost: product.cost || 0,
+    lowStockThreshold: product.threshold || 0,
+    barcode: product.barcode?.trim() || null,
+    imageUrl: product.imageUrl,
+  }), 'product');
+  return normalizeProduct(result);
 }
 
 export async function addStockMovement({ productId, type, qty, note }) {
@@ -148,17 +161,27 @@ export async function recordRepayment({ idempotencyKey, customerId, amount, meth
   });
 }
 
-export async function createSale({ idempotencyKey, items, customerId, payments, allowOverLimit = false }) {
+export async function createSale({ idempotencyKey, items, customerId, customerName, payments, allowOverLimit = false }) {
   if (!items?.length) throw new Error('The cart is empty');
   const payload = await post('/sales', {
     idempotencyKey,
     items,
     customerId: customerId || null,
+    customerName: customerName || null,
     payments,
     allowOverLimit,
   });
   const result = entity(payload, 'sale');
   return { sale: normalizeSale(result), duplicate: Boolean(payload?.duplicate ?? result.duplicate) };
+}
+
+export async function updateSalePayment(saleId, { paidAmount, method, idempotencyKey }) {
+  const result = entity(await put(`/sales/${encodeURIComponent(saleId)}/payment`, {
+    paidAmount,
+    method,
+    idempotencyKey,
+  }), 'sale');
+  return normalizeSale(result);
 }
 
 export async function cancelSale(saleId, reason) {

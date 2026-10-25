@@ -1,0 +1,37 @@
+[
+  {
+    "name": "Achu with Yellow Soup (sample)",
+    "category": "Meals",
+    "unit": "plate",
+    "price": 2500,
+    "imageUrl": "https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=800&q=80"
+  },
+  {
+    "name": "Fufu and Vegetables (sample)",
+    "category": "Meals",
+    "unit": "plate",
+    "price": 2000,
+    "imageUrl": "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&w=800&q=80"
+  },
+  {
+    "name": "Conchaf Rice (sample)",
+    "category": "Meals",
+    "unit": "plate",
+    "price": 2500,
+    "imageUrl": "https://images.unsplash.com/photo-1512058564366-18510be2db19?auto=format&fit=crop&w=800&q=80"
+  },
+  {
+    "name": "Eru (sample)",
+    "category": "Meals",
+    "unit": "plate",
+    "price": 2500,
+    "imageUrl": "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80"
+  },
+  {
+    "name": "Water Fufu (sample)",
+    "category": "Meals",
+    "unit": "plate",
+    "price": 2000,
+    "imageUrl": "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=800&q=80"
+  }
+]

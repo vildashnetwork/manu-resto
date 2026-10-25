@@ -16,7 +16,8 @@
         {
           "photosPermission": "Allow Manu's Resto Manager to access photos so you can add product images."
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "android": {
       "package": "com.manusresto.manager"

@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "check": "node --check src/server.js && node --check src/app.js && node --check src/models.js && node --check src/routes.js"
+    "seed:drinks": "node scripts/seed-drinks.js",
+    "seed:meals": "node scripts/seed-meals.js",
+    "check": "node --check src/server.js && node --check src/app.js && node --check src/models.js && node --check src/routes.js && node --check scripts/seed-drinks.js && node --check scripts/seed-meals.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -23,6 +23,10 @@ function httpError(status, message, code, details) {
   return error;
 }
 
+function asyncRoute(handler) {
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+}
+
 function isId(value) {
   return mongoose.isValidObjectId(value);
 }
@@ -81,12 +85,12 @@ router.get('/health', (req, res) => {
   res.json({ status: 'ok', database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
 });
 
-router.get('/products', async (req, res) => {
+router.get('/products', asyncRoute(async (req, res) => {
   const products = await Product.find({ active: true }).sort({ category: 1, name: 1 }).lean();
   res.json({ products: products.map(serializeProduct) });
-});
+}));
 
-router.post('/products', async (req, res) => {
+router.post('/products', asyncRoute(async (req, res) => {
   const { name, category, unit, price, cost, lowStockThreshold, threshold, tracked, openingStock, imageUrl, barcode } = req.body;
   if (typeof name !== 'string' || !name.trim()) throw httpError(400, 'Product name is required.');
   if (!Number.isSafeInteger(price) || price < 1) throw httpError(400, 'Selling price must be a positive whole number.');
@@ -128,9 +132,9 @@ router.post('/products', async (req, res) => {
   });
 
   res.status(201).json({ product: serializeProduct(product) });
-});
+}));
 
-router.put('/products/:id', async (req, res) => {
+router.put('/products/:id', asyncRoute(async (req, res) => {
   if (!isId(req.params.id)) throw httpError(400, 'Invalid product ID.');
   const updates = {};
   for (const field of ['price', 'cost', 'lowStockThreshold']) {
@@ -168,9 +172,9 @@ router.put('/products/:id', async (req, res) => {
   );
   if (!product) throw httpError(404, 'Product not found.');
   res.json({ product: serializeProduct(product) });
-});
+}));
 
-router.post('/stock/movements', async (req, res) => {
+router.post('/stock/movements', asyncRoute(async (req, res) => {
   const { productId, type, qty, note } = req.body;
   if (!isId(productId)) throw httpError(400, 'Invalid product ID.');
   if (!Number.isSafeInteger(qty) || qty === 0) throw httpError(400, 'Quantity must be a non-zero whole number.');
@@ -199,14 +203,14 @@ router.post('/stock/movements', async (req, res) => {
     return updated;
   });
   res.status(201).json({ product: serializeProduct(product) });
-});
+}));
 
-router.get('/customers', async (req, res) => {
+router.get('/customers', asyncRoute(async (req, res) => {
   const customers = await Customer.find({ active: true }).sort({ name: 1 }).lean();
   res.json({ customers: customers.map(serializeCustomer) });
-});
+}));
 
-router.post('/customers', async (req, res) => {
+router.post('/customers', asyncRoute(async (req, res) => {
   const { name, phone, code, creditLimit, openingDebt, notes } = req.body;
   if (typeof name !== 'string' || !name.trim()) throw httpError(400, 'Customer name is required.');
   const limit = creditLimit ?? 0;
@@ -235,16 +239,16 @@ router.post('/customers', async (req, res) => {
     return created;
   });
   res.status(201).json({ customer: serializeCustomer(customer) });
-});
+}));
 
-router.get('/customers/:id', async (req, res) => {
+router.get('/customers/:id', asyncRoute(async (req, res) => {
   if (!isId(req.params.id)) throw httpError(400, 'Invalid customer ID.');
   const customer = await Customer.findOne({ _id: req.params.id, active: true });
   if (!customer) throw httpError(404, 'Customer not found.');
   res.json({ customer: serializeCustomer(customer) });
-});
+}));
 
-router.get('/customers/:id/statement', async (req, res) => {
+router.get('/customers/:id/statement', asyncRoute(async (req, res) => {
   if (!isId(req.params.id)) throw httpError(400, 'Invalid customer ID.');
   const customer = await Customer.exists({ _id: req.params.id, active: true });
   if (!customer) throw httpError(404, 'Customer not found.');
@@ -255,9 +259,9 @@ router.get('/customers/:id/statement', async (req, res) => {
     return { ...entry, id: String(entry._id), balance };
   }).reverse();
   res.json({ statement });
-});
+}));
 
-router.post('/payments/repayments', async (req, res) => {
+router.post('/payments/repayments', asyncRoute(async (req, res) => {
   const { idempotencyKey, customerId, amount, method, reference } = req.body;
   if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) throw httpError(400, 'Idempotency key is required.');
   if (!isId(customerId)) throw httpError(400, 'Select a valid customer.');
@@ -300,9 +304,9 @@ router.post('/payments/repayments', async (req, res) => {
     }
     throw error;
   }
-});
+}));
 
-router.post('/sales', async (req, res) => {
+router.post('/sales', asyncRoute(async (req, res) => {
   const { idempotencyKey, items, customerId, customerName, payments = [], allowOverLimit = false } = req.body;
   if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) throw httpError(400, 'Idempotency key is required.');
   if (!Array.isArray(items) || items.length === 0) throw httpError(400, 'The cart is empty.');
@@ -428,9 +432,9 @@ router.post('/sales', async (req, res) => {
     }
     throw error;
   }
-});
+}));
 
-router.put('/sales/:id/payment', async (req, res) => {
+router.put('/sales/:id/payment', asyncRoute(async (req, res) => {
   const { paidAmount, method, idempotencyKey } = req.body;
   if (!isId(req.params.id)) throw httpError(400, 'Invalid sale ID.');
   if (!Number.isSafeInteger(paidAmount) || paidAmount < 0) throw httpError(400, 'Paid amount must be a non-negative whole number.');
@@ -511,16 +515,16 @@ router.put('/sales/:id/payment', async (req, res) => {
     }
     throw error;
   }
-});
+}));
 
-router.get('/sales', async (req, res) => {
+router.get('/sales', asyncRoute(async (req, res) => {
   const created_at = parseRange(req.query);
   const limit = Math.min(Math.max(Number.parseInt(req.query.limit ?? '30', 10) || 30, 1), 100);
   const sales = await Sale.find({ created_at }).sort({ created_at: -1 }).limit(limit).lean();
   res.json({ sales: sales.map(serializeSale) });
-});
+}));
 
-router.post('/sales/:id/cancel', async (req, res) => {
+router.post('/sales/:id/cancel', asyncRoute(async (req, res) => {
   const { reason } = req.body;
   if (!isId(req.params.id)) throw httpError(400, 'Invalid sale ID.');
   if (typeof reason !== 'string' || !reason.trim()) throw httpError(400, 'A cancellation reason is required.');
@@ -561,9 +565,9 @@ router.post('/sales/:id/cancel', async (req, res) => {
     return current;
   });
   res.json({ sale: serializeSale(sale) });
-});
+}));
 
-router.post('/expenses', async (req, res) => {
+router.post('/expenses', asyncRoute(async (req, res) => {
   const { category, amount, method, note } = req.body;
   if (typeof category !== 'string' || !category.trim()) throw httpError(400, 'Expense category is required.');
   if (!Number.isSafeInteger(amount) || amount < 1) throw httpError(400, 'Amount must be a positive whole number.');
@@ -575,9 +579,9 @@ router.post('/expenses', async (req, res) => {
     note: typeof note === 'string' ? note.trim() || null : null,
   });
   res.status(201).json({ expense: { ...expense.toObject(), id: String(expense._id) } });
-});
+}));
 
-router.get('/reports', async (req, res) => {
+router.get('/reports', asyncRoute(async (req, res) => {
   const created_at = parseRange(req.query);
   const [sales, payments, expenses, customers] = await Promise.all([
     Sale.find({ created_at }).lean(),
@@ -639,6 +643,6 @@ router.get('/reports', async (req, res) => {
         .map((expense) => ({ ...expense, id: String(expense._id) })),
     },
   });
-});
+}));
 
 export default router;

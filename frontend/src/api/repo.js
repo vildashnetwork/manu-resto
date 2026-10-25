@@ -16,12 +16,18 @@ async function request(path, options = {}) {
     try {
       payload = JSON.parse(text);
     } catch {
+      if (!response.ok && [502, 503, 504].includes(response.status)) {
+        throw new Error(`The backend service is unavailable (HTTP ${response.status}). Please try again after the API has been redeployed.`);
+      }
       throw new Error(`The API returned an invalid response (${response.status}).`);
     }
   }
 
   if (!response.ok) {
-    const error = new Error(payload?.message || payload?.error || `Request failed (${response.status}).`);
+    const fallback = [502, 503, 504].includes(response.status)
+      ? `The backend service is unavailable (HTTP ${response.status}). Please try again after the API has been redeployed.`
+      : `Request failed (${response.status}).`;
+    const error = new Error(payload?.message || payload?.error || fallback);
     error.code = payload?.code;
     error.details = payload?.details;
     throw error;

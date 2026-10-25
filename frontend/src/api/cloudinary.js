@@ -2,7 +2,6 @@ import { Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET } from '../config/cloudinary';
-import { getAppMode } from '../db';
 import { uid } from '../utils';
 
 export async function uploadProductImage(uri, fileName = 'product-image.jpg', mimeType = 'image/jpeg') {
@@ -54,13 +53,10 @@ export async function chooseAndUploadProductImage() {
 
   const asset = result.assets?.[0];
   if (!asset?.uri) throw new Error('The selected image could not be read.');
-  if (Platform.OS !== 'web' && FileSystem.documentDirectory) {
-    const directory = `${FileSystem.documentDirectory}product-images/`;
-    await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
-    const localUri = `${directory}${uid()}.${asset.fileName?.split('.').pop() || 'jpg'}`;
-    await FileSystem.copyAsync({ from: asset.uri, to: localUri });
-    if (await getAppMode() === 'offline') return localUri;
-    return uploadProductImage(localUri, asset.fileName || 'product-image.jpg', asset.mimeType || 'image/jpeg');
-  }
-  return uploadProductImage(asset.uri, asset.fileName || 'product-image.jpg', asset.mimeType || 'image/jpeg');
+  const extension = asset.mimeType?.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || 'jpg';
+  const directory = `${FileSystem.documentDirectory}product-images/`;
+  await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+  const localUri = `${directory}${uid()}.${extension}`;
+  await FileSystem.copyAsync({ from: asset.uri, to: localUri });
+  return localUri;
 }

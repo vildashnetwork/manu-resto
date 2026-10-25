@@ -7,7 +7,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import {
-  Hero, Card, Btn, Chip, Field, SearchBox, Sheet, Row, Avatar, IconDot, Money, Pill, Empty, useLoad, ScreenShimmer, screenStyle,
+  Hero, Card, Btn, Chip, Field, SearchBox, Sheet, Row, Avatar, IconDot, Money, Pill, Empty, LoadError, useLoad, ScreenShimmer, screenStyle,
 } from '../../src/components/ui';
 import { getProducts, getCustomers, createSale } from '../../src/api/repo';
 import { fcfa, parseAmount, uid } from '../../src/utils';
@@ -43,7 +43,10 @@ function getReceiptLogoDataUri() {
 }
 
 export default function Sales() {
-  const [data, reload, loading] = useLoad(async () => ({ products: await getProducts(), customers: await getCustomers() }));
+  const [data, reload, loading, error] = useLoad(async () => ({
+    products: await getProducts(),
+    customers: await getCustomers(),
+  }));
   const [cat, setCat] = useState('All');
   const [q, setQ] = useState('');
   const [cart, setCart] = useState({}); // productId -> qty
@@ -66,13 +69,23 @@ export default function Sales() {
   const products = data?.products ?? [];
   const customers = data?.customers ?? [];
   const categories = useMemo(() => ['All', ...Array.from(new Set(products.map((p) => p.category)))], [products]);
-  const shown = products.filter(
-    (p) => (cat === 'All' || p.category === cat) && (p.name + ' ' + (p.barcode || '')).toLowerCase().includes(q.trim().toLowerCase())
+  const shown = useMemo(
+    () =>
+      products.filter(
+        (p) =>
+          (cat === 'All' || p.category === cat) &&
+          (p.name + ' ' + (p.barcode || '')).toLowerCase().includes(q.trim().toLowerCase()),
+      ),
+    [products, cat, q],
   );
 
-  const lines = products.filter((p) => cart[p.id] > 0).map((p) => ({
-    ...p, qty: cart[p.id], salePrice: priceOverrides[p.id] ?? p.price,
-  }));
+  const lines = useMemo(
+    () =>
+      products
+        .filter((p) => cart[p.id] > 0)
+        .map((p) => ({ ...p, qty: cart[p.id], salePrice: priceOverrides[p.id] ?? p.price })),
+    [products, cart, priceOverrides],
+  );
   const total = lines.reduce((s, l) => s + l.salePrice * l.qty, 0);
   const paid = METHODS.reduce((s, m) => s + parseAmount(pay[m]), 0);
   const credit = total - paid;
@@ -317,6 +330,7 @@ export default function Sales() {
   });
 
   if (loading && !data) return <ScreenShimmer variant="sales" />;
+  if (!data && error) return <LoadError error={error} onRetry={reload} />;
 
   return (
     <View style={screenStyle}>

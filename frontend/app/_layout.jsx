@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Btn } from '../src/components/ui';
 import { AppDrawer, DrawerContext, HeaderBrandTitle, MenuButton } from '../src/components/AppNavigation';
+import { getConnectionMode, syncNow } from '../src/api/repo';
 import { colors } from '../src/theme';
 
 export default function RootLayout() {
@@ -56,6 +57,12 @@ export default function RootLayout() {
     return () => subscription.remove();
   }, [unlock]);
 
+  useEffect(() => {
+    getConnectionMode().then((mode) => {
+      if (mode === 'online') syncNow().catch((error) => console.warn('Background sync failed', error));
+    }).catch((error) => console.warn('Could not initialize local storage', error));
+  }, []);
+
   return (
     <>
       <StatusBar style="light" />
@@ -89,7 +96,7 @@ export default function RootLayout() {
           <Stack.Screen
             name="sync"
             options={{
-              title: 'Sync progress',
+              title: 'Sync Center',
               headerTitle: () => <HeaderBrandTitle />,
               headerTitleAlign: 'left',
               headerLeft: () => <MenuButton onPress={() => setDrawerOpen(true)} />,

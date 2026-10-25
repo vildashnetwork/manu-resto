@@ -1,155 +1,147 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import { Btn, Card, Hero, screenStyle } from '../src/components/ui';
-import { getSyncQueue } from '../src/db/repo';
-import { readSyncProgress, syncAll } from '../src/db/sync';
-import { colors, radius } from '../src/theme';
+import { Btn, Card, Hero, Pill, Section, screenStyle, useLoad } from '../src/components/ui';
+import { getBackendAvailability, getConnectionMode, getSyncStatus, retrySync, setConnectionMode, syncNow } from '../src/api/repo';
+import { colors } from '../src/theme';
 import { fmtDateTime } from '../src/utils';
 
-export default function SyncScreen() {
-  const { start } = useLocalSearchParams();
-  const [progress, setProgress] = useState(null);
-  const [queue, setQueue] = useState([]);
-  const [running, setRunning] = useState(false);
+export default function SyncCenter() {
+  const [status, reload] = useLoad(getSyncStatus);
+  const [mode, setMode] = useState('online');
+  const [availability, setAvailability] = useState(null);
+  const [busy, setBusy] = useState(false);
 
-  async function refresh() {
+  useEffect(() => {
+    getConnectionMode().then(setMode).catch((error) => Alert.alert('Could not read connection mode', error.message || String(error)));
+    const timer = setInterval(reload, 1000);
+    return () => clearInterval(timer);
+  }, [reload]);
+
+  async function checkConnection() {
+    const result = await getBackendAvailability();
+    setAvailability(result);
+  }
+
+  async function pauseSync() {
     try {
-      const [current, pending] = await Promise.all([readSyncProgress(), getSyncQueue()]);
-      setProgress(current);
-      setQueue(pending);
-      setRunning(current.status === 'syncing');
+      await setConnectionMode('offline');
+      setMode('offline');
+      await reload();
     } catch (error) {
-      Alert.alert('Could not read sync status', error.message || String(error));
+      Alert.alert('Could not pause sync', error.message || String(error));
     }
   }
 
-  useEffect(() => {
-    let active = true;
-    const poll = async () => {
-      if (!active) return;
-      try {
-        const [current, pending] = await Promise.all([readSyncProgress(), getSyncQueue()]);
-        if (!active) return;
-        setProgress(current);
-        setQueue(pending);
-        setRunning(current.status === 'syncing');
-      } catch (error) {
-        if (active) Alert.alert('Could not read sync status', error.message || String(error));
-      }
-    };
-    void poll();
-    const timer = setInterval(poll, 800);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (start !== '1') return;
-    void startSync();
-  }, [start]);
-
-  async function startSync() {
-    setRunning(true);
+  async function runSync(retry = false) {
+    if (busy) return;
+    setBusy(true);
     try {
-      await syncAll(setProgress);
-      await refresh();
+      if (retry) await retrySync();
+      else await syncNow();
+      await reload();
     } catch (error) {
-      Alert.alert('Sync could not complete', error.message || String(error));
+      Alert.alert('Sync paused', error.message || String(error));
+      await reload();
     } finally {
-      setRunning(false);
+      setBusy(false);
     }
   }
 
-  const percent = Math.max(0, Math.min(100, Number(progress?.percent || 0)));
-  const syncing = running || progress?.status === 'syncing';
+  const pendingCount = status?.pending || 0;
+  const failedCount = status?.failed || 0;
+  const total = status?.total || 0;
+  const processed = status?.processed || 0;
 
   return (
     <ScrollView style={screenStyle} contentContainerStyle={s.content}>
-      <Hero eyebrow="Device data" title="Sync progress">
-        <Text style={s.heroText}>Sync your local changes and download a fresh copy for offline use.</Text>
+      <Hero eyebrow="Local-first data" title="Sync Center">
+        <Text style={s.heroText}>Your changes are stored on this device first. Sync runs separately in the background.</Text>
       </Hero>
 
       <View style={s.body}>
         <Card>
-          <View style={s.progressHead}>
-            <Text style={s.progressLabel}>{syncing ? 'Syncing' : progress?.status === 'complete' ? 'Up to date' : progress?.status === 'error' ? 'Needs attention' : 'Ready to sync'}</Text>
-            <Text style={s.percent}>{percent}%</Text>
+          <View style={s.row}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.title}>Selected mode</Text>
+              <Text style={s.detail}>Internet availability is checked separately from this preference.</Text>
+            </View>
+            <Pill label={mode === 'online' ? 'Online' : 'Offline'} tone={mode === 'online' ? 'ok' : 'warn'} />
           </View>
-          <View
-            accessibilityRole="progressbar"
-            accessibilityValue={{ min: 0, max: 100, now: percent }}
-            style={s.track}
-          >
-            <View style={[s.fill, { width: `${percent}%` }]} />
+          <View style={[s.row, { marginTop: 14 }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.title}>Backend reachability</Text>
+              <Text style={s.detail}>
+                {availability
+                  ? availability.reachable
+                    ? availability.database === 'connected' ? 'API and database connected' : 'API reachable; database is disconnected'
+                    : availability.error
+                  : 'Not checked'}
+              </Text>
+            </View>
+            <Btn small variant="soft" title="Check" onPress={checkConnection} />
           </View>
-          <Text style={s.stage}>{progress?.stage || 'No sync has been run on this device yet.'}</Text>
-          <View style={s.stats}>
-            <Text style={s.stat}>{progress?.counts?.done || 0} synced</Text>
-            <Text style={s.stat}>{progress?.counts?.pending || 0} pending</Text>
-            <Text style={[s.stat, (progress?.counts?.errors || 0) > 0 && { color: colors.danger }]}>
-              {progress?.counts?.errors || 0} failed
-            </Text>
-          </View>
-          {progress?.lastSyncedAt ? <Text style={s.lastSynced}>Last download: {fmtDateTime(progress.lastSyncedAt)}</Text> : null}
         </Card>
 
-        <Btn
-          title={syncing ? 'Syncing…' : progress?.status === 'error' ? 'Retry sync' : 'Sync now'}
-          icon="sync-outline"
-          onPress={startSync}
-          disabled={syncing}
-          style={{ marginTop: 14 }}
-        />
+        <Card style={{ marginTop: 14 }}>
+          <Text style={s.title}>Synchronization progress</Text>
+          <Text style={s.progressLabel}>
+            {status?.active ? `${processed} of ${total} sync steps` : `${pendingCount} queued · ${failedCount} failed`}
+          </Text>
+          <View style={s.track}>
+            <View style={[s.fill, { width: `${status?.active ? status.percent : failedCount ? 0 : 100}%` }]} />
+          </View>
+          <Text style={s.detail}>{status?.active ? `${status.percent}% complete` : 'Sync work does not block screens or local saves.'}</Text>
+          {status?.lastSyncAt ? <Text style={s.detail}>Last sync: {fmtDateTime(status.lastSyncAt)}</Text> : null}
+          {Number(status?.imageCacheFailures) > 0 ? (
+            <Text style={s.warning}>{status.imageCacheFailures} product image(s) could not be cached. Check your connection and sync again.</Text>
+          ) : null}
+          {status?.syncError ? <Text style={s.warning}>{status.syncError}</Text> : null}
+          <View style={s.actions}>
+            {status?.active ? (
+              <Btn title="Pause sync" icon="pause" variant="soft" onPress={pauseSync} disabled={busy} />
+            ) : null}
+            {failedCount > 0 ? (
+              <Btn title={busy ? 'Retrying…' : 'Retry failed changes'} icon="refresh" onPress={() => runSync(true)} disabled={busy || status?.active || mode !== 'online'} />
+            ) : (
+              <Btn title={busy || status?.active ? 'Syncing…' : 'Sync now'} icon="sync" onPress={() => runSync()} disabled={busy || status?.active || mode !== 'online'} />
+            )}
+            <Btn title="Refresh status" icon="refresh-outline" variant="soft" onPress={reload} />
+          </View>
+        </Card>
 
-        <View style={{ marginTop: 20 }}>
-          <Text style={s.sectionTitle}>Pending and failed items</Text>
-          {queue.length === 0 ? (
-            <Card style={s.empty}>
-              <Ionicons name="checkmark-circle-outline" size={30} color={colors.ok} />
-              <Text style={s.emptyText}>No local changes are waiting to sync.</Text>
-            </Card>
-          ) : queue.map((item) => (
-            <Card key={item.id} style={s.queueItem}>
-              <View style={s.queueTitleRow}>
-                <Text style={s.queueTitle}>{item.entity.replace('_', ' ')} · {item.op}</Text>
-                <Text style={[s.queueStatus, item.status === 'error' && { color: colors.danger }]}>
-                  {item.status === 'error' ? 'Failed' : item.status === 'syncing' ? 'In progress' : 'Waiting'}
-                </Text>
+        <Section title="Queued changes">
+          <Card>
+            {!status?.items?.length ? (
+              <Text style={s.detail}>There are no unsynchronized changes.</Text>
+            ) : status.items.map((item) => (
+              <View key={item.id} style={s.item}>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.itemTitle}>{item.type.replace(/\./g, ' ')}</Text>
+                  <Text style={s.detail}>{fmtDateTime(item.created_at)}</Text>
+                  {item.error ? <Text style={s.warning}>{item.error}</Text> : null}
+                </View>
+                <Pill label={item.status} tone={item.status === 'failed' ? 'danger' : 'warn'} />
               </View>
-              {item.error ? <Text style={s.error}>{item.error}</Text> : null}
-              <Text style={s.queueDate}>{fmtDateTime(item.created_at)}</Text>
-            </Card>
-          ))}
-        </View>
+            ))}
+          </Card>
+        </Section>
       </View>
     </ScrollView>
   );
 }
 
 const s = StyleSheet.create({
-  content: { paddingBottom: 32 },
+  content: { paddingBottom: 30 },
   body: { padding: 16 },
-  heroText: { color: 'rgba(255,255,255,0.78)', fontSize: 13, lineHeight: 19, marginTop: 7 },
-  progressHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  progressLabel: { color: colors.ink, fontSize: 16, fontWeight: '800' },
-  percent: { color: colors.forest, fontSize: 24, fontWeight: '900' },
-  track: { height: 12, backgroundColor: colors.cream, borderRadius: 8, overflow: 'hidden', marginTop: 14 },
-  fill: { height: '100%', backgroundColor: colors.forest, borderRadius: 8 },
-  stage: { color: colors.muted, fontSize: 13, lineHeight: 19, marginTop: 12 },
-  stats: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16, paddingTop: 13, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
-  stat: { color: colors.muted, fontSize: 12, fontWeight: '700' },
-  lastSynced: { color: colors.faint, fontSize: 11, marginTop: 12 },
-  sectionTitle: { color: colors.ink, fontSize: 15, fontWeight: '800', marginBottom: 10 },
-  empty: { alignItems: 'center', gap: 8 },
-  emptyText: { color: colors.muted, fontSize: 13, textAlign: 'center' },
-  queueItem: { marginBottom: 9 },
-  queueTitleRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
-  queueTitle: { flex: 1, color: colors.ink, fontSize: 13, fontWeight: '700', textTransform: 'capitalize' },
-  queueStatus: { color: colors.warn, fontSize: 11, fontWeight: '800' },
-  error: { color: colors.danger, fontSize: 12, lineHeight: 17, marginTop: 7 },
-  queueDate: { color: colors.faint, fontSize: 10, marginTop: 8 },
+  heroText: { color: 'rgba(255,255,255,0.78)', marginTop: 8, fontSize: 13, lineHeight: 19 },
+  title: { color: colors.ink, fontSize: 15, fontWeight: '800' },
+  detail: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 4 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  progressLabel: { color: colors.ink, fontSize: 13, marginTop: 12, marginBottom: 8 },
+  track: { height: 8, backgroundColor: colors.line, borderRadius: 5, overflow: 'hidden' },
+  fill: { height: 8, backgroundColor: colors.forest, borderRadius: 5 },
+  warning: { color: colors.danger, fontSize: 12, lineHeight: 18, marginTop: 8 },
+  actions: { gap: 10, marginTop: 16 },
+  item: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomColor: colors.line, borderBottomWidth: StyleSheet.hairlineWidth },
+  itemTitle: { color: colors.ink, fontSize: 13, fontWeight: '700', textTransform: 'capitalize' },
 });

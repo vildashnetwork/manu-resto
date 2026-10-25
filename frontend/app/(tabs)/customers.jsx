@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ScrollView, View, Text, Alert, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Hero, Card, Btn, Chip, Field, SearchBox, Sheet, Row, Avatar, Pill, Money, Empty, Fab, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
+import { Hero, Card, Btn, Chip, Field, SearchBox, Sheet, Row, Avatar, Pill, Money, Empty, Fab, LoadError, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
 import { getCustomers, createCustomer } from '../../src/api/repo';
 import { fcfa, parseAmount } from '../../src/utils';
 import { colors } from '../../src/theme';
@@ -10,7 +10,7 @@ const EMPTY = { name: '', phone: '', code: '', limit: '', opening: '', notes: ''
 
 export default function Customers() {
   const router = useRouter();
-  const [list, reload, loading] = useLoad(getCustomers);
+  const [list, reload, loading, error] = useLoad(getCustomers);
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState('All');
   const [open, setOpen] = useState(false);
@@ -18,10 +18,17 @@ export default function Customers() {
   const [saving, setSaving] = useState(false);
 
   const all = list ?? [];
-  const customers = all
-    .filter((c) => (c.name + (c.phone || '') + (c.code || '')).toLowerCase().includes(q.trim().toLowerCase()))
-    .filter((c) => filter === 'All' || c.balance > 0)
-    .sort((a, b) => (filter === 'Owing' ? b.balance - a.balance : a.name.localeCompare(b.name)));
+  const customers = useMemo(
+    () =>
+      [...all]
+        .filter(
+          (c) =>
+            (c.name + (c.phone || '') + (c.code || '')).toLowerCase().includes(q.trim().toLowerCase()),
+        )
+        .filter((c) => filter === 'All' || c.balance > 0)
+        .sort((a, b) => (filter === 'Owing' ? b.balance - a.balance : a.name.localeCompare(b.name))),
+    [all, q, filter],
+  );
   const totalDebt = all.reduce((sum, c) => sum + Math.max(0, c.balance), 0);
   const debtors = all.filter((c) => c.balance > 0).length;
 
@@ -44,6 +51,7 @@ export default function Customers() {
   }
 
   if (loading && !list) return <ScreenShimmer variant="list" />;
+  if (!list && error) return <LoadError error={error} onRetry={reload} />;
 
   return (
     <View style={screenStyle}>

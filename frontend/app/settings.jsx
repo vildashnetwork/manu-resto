@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Btn, Card, Field, Hero, ScreenShimmer, useLoad, screenStyle } from '../src/components/ui';
-import { getSettings, updateSettings } from '../src/api/repo';
+import { Btn, Card, Field, Hero, LoadError, ScreenShimmer, useLoad, screenStyle } from '../src/components/ui';
+import { getSettings, updateSettings, getConnectionMode, setConnectionMode } from '../src/api/repo';
 import { colors, radius } from '../src/theme';
-import { getAppMode, hasOfflineSnapshot, setAppMode } from '../src/db';
 
 const DEFAULT_NOTIFICATIONS = { lowStock: true, creditDebt: true, expenses: true };
 
@@ -16,24 +15,19 @@ const NOTIFICATION_OPTIONS = [
 
 export default function Settings() {
   const router = useRouter();
-  const [loaded, , loading] = useLoad(getSettings);
+  const [loaded, reload, loading, error] = useLoad(getSettings);
   const [email, setEmail] = useState('');
   const [notifications, setNotifications] = useState(DEFAULT_NOTIFICATIONS);
   const [senderEmail, setSenderEmail] = useState('');
   const [senderConfigured, setSenderConfigured] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [mode, setMode] = useState(null);
-  const [offlineReady, setOfflineReady] = useState(false);
-  const [modeBusy, setModeBusy] = useState(false);
+  const [connectionMode, setMode] = useState('online');
+  const [modeSaving, setModeSaving] = useState(false);
 
   useEffect(() => {
-    let mounted = true;
-    Promise.all([getAppMode(), hasOfflineSnapshot()]).then(([currentMode, ready]) => {
-      if (!mounted) return;
-      setMode(currentMode);
-      setOfflineReady(ready);
-    }).catch((error) => Alert.alert('Could not read offline settings', error.message || String(error)));
-    return () => { mounted = false; };
+    getConnectionMode().then(setMode).catch((error) => {
+      Alert.alert('Could not load connection mode', error.message || String(error));
+    });
   }, []);
 
   useEffect(() => {
@@ -43,30 +37,6 @@ export default function Settings() {
     setSenderEmail(loaded.senderEmail || '');
     setSenderConfigured(Boolean(loaded.senderConfigured));
   }, [loaded]);
-
-  async function changeMode(nextMode) {
-    if (modeBusy || nextMode === mode) return;
-    if (nextMode === 'offline' && !offlineReady) {
-      Alert.alert('Download data first', 'Sync your products, customers, sales, and images while online before turning on offline mode.');
-      return;
-    }
-    setModeBusy(true);
-    try {
-      await setAppMode(nextMode);
-      setMode(nextMode);
-      if (nextMode === 'online') {
-        router.push('/sync?start=1');
-      }
-    } catch (error) {
-      Alert.alert('Could not change connection mode', error.message || String(error));
-    } finally {
-      setModeBusy(false);
-    }
-  }
-
-  function startSync() {
-    router.push('/sync?start=1');
-  }
 
   async function save() {
     if (saving) return;
@@ -83,9 +53,23 @@ export default function Settings() {
     } finally {
       setSaving(false);
     }
+
+    async function changeMode(enabled) {
+      if (modeSaving) return;
+      setModeSaving(true);
+      try {
+        const mode = await setConnectionMode(enabled ? 'online' : 'offline');
+        setMode(mode);
+      } catch (error) {
+        Alert.alert('Could not change connection mode', error.message || String(error));
+      } finally {
+        setModeSaving(false);
+      }
+    }
   }
 
   if (loading && !loaded) return <ScreenShimmer variant="list" />;
+  if (!loaded && error) return <LoadError error={error} onRetry={reload} />;
 
   return (
     <ScrollView style={screenStyle} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
@@ -95,27 +79,31 @@ export default function Settings() {
 
       <View style={s.body}>
         <Card>
-          <Text style={s.sectionTitle}>Connection mode</Text>
-          <Text style={s.description}>Offline mode uses data and product images saved on this phone. Sync before your first offline session.</Text>
-          <View style={s.modeRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={s.optionTitle}>{mode === 'offline' ? 'Offline mode' : 'Online mode'}</Text>
-              <Text style={s.optionDescription}>{mode === 'offline' ? 'Changes are saved locally until you switch online.' : 'Online data is used. Sync is started when you switch online.'}</Text>
+          <View style={s.option}>
+            <View style={s.optionText}>
+              <Text style={s.sectionTitle}>Connection mode</Text>
+              <Text style={s.optionDescription}>
+                {connectionMode === 'offline'
+                  ? 'Use saved products and records on this device. Changes queue until you reconnect.'
+                  : 'Use the backend and synchronize queued changes in the background.'}
+              </Text>
             </View>
             <Switch
-              value={mode === 'online'}
-              onValueChange={(online) => changeMode(online ? 'online' : 'offline')}
-              disabled={mode === null || modeBusy}
+              value={connectionMode === 'online'}
+              onValueChange={changeMode}
+              disabled={modeSaving}
               trackColor={{ false: colors.line, true: colors.forestMid }}
-              thumbColor={mode === 'online' ? colors.forest : '#f4f3f4'}
+              thumbColor={connectionMode === 'online' ? colors.forest : '#f4f3f4'}
               accessibilityLabel="Online mode"
             />
           </View>
-          {!offlineReady ? <Text style={s.warning}>Offline data is not ready on this phone yet.</Text> : null}
-          <Btn title="Sync data and prepare offline" icon="cloud-download-outline" onPress={startSync} style={{ marginTop: 12 }} />
-          <Pressable onPress={() => router.push('/sync')} style={s.syncLink}>
-            <Text style={s.syncLinkText}>View sync progress and pending changes</Text>
-          </Pressable>
+          <Btn
+            title="Open Sync Center"
+            icon="sync"
+            variant="soft"
+            onPress={() => router.push('/sync')}
+            style={{ marginTop: 10 }}
+          />
         </Card>
 
         <Card style={{ marginTop: 14 }}>
@@ -182,10 +170,6 @@ const s = StyleSheet.create({
   senderLabel: { color: colors.muted, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
   senderValue: { color: colors.ink, fontSize: 14, fontWeight: '700', marginTop: 4 },
   senderStatus: { fontSize: 12, lineHeight: 17, marginTop: 5 },
-  modeRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
-  warning: { color: colors.warn, fontSize: 12, lineHeight: 17, marginTop: 6 },
-  syncLink: { paddingTop: 12, alignItems: 'center' },
-  syncLinkText: { color: colors.forest, fontSize: 13, fontWeight: '700' },
   option: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 13, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
   optionLast: { borderBottomWidth: 0, paddingBottom: 2 },
   optionText: { flex: 1 },

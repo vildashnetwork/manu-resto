@@ -47,10 +47,12 @@ The uploader uses `API_BASE_URL` or defaults to `https://manu-ltx7.onrender.com/
 - `POST|GET /api/sales`, `POST /api/sales/:id/cancel`, `PUT /api/sales/:id/payment`
 - `POST /api/expenses`
 - `GET|PUT /api/settings` (admin notification email and notification preferences)
-- `GET /api/sync/snapshot` (all active catalog/customer and transaction data needed for device offline mode)
+- `GET /api/sync/snapshot` (local-first client bootstrap and refresh)
 - `GET /api/reports`
 
 Sale and repayment writes use MongoDB transactions. Use a MongoDB replica set or Atlas deployment that supports transactions. Product images are uploaded by the frontend to Cloudinary; this API stores the secure image URL, not the image file.
+
+The local-first frontend requires the snapshot endpoint and accepts optional `idempotencyKey` values for product/customer creation, stock movements, and expense creation. Keep these keys unique per logical write; they let the client retry a request after an interrupted connection without repeating its effects. The snapshot contains the current catalog and business records, and is currently a full snapshot rather than an incremental/paginated feed.
 
 Email notification preferences are stored in the MongoDB `settings` collection. When enabled, Brevo sends email after a tracked product crosses its low-stock threshold, customer debt increases from a credit sale or opening balance, or an expense is recorded. Configure Brevo only with backend environment variables; never put the API key in the frontend.
 

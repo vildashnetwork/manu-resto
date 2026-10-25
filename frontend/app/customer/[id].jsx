@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { ScrollView, View, Text, Alert, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Hero, Card, Btn, Chip, Field, Sheet, Section, Avatar, IconDot, Money, Empty, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
+import { Hero, Card, Btn, Chip, Field, Sheet, Section, Avatar, IconDot, Money, Empty, LoadError, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
 import { getCustomer, getStatement, recordRepayment } from '../../src/api/repo';
 import { fcfa, parseAmount, fmtDateTime, uid } from '../../src/utils';
 import { colors, METHODS, METHOD_ICONS } from '../../src/theme';
@@ -16,7 +16,7 @@ const TYPE = {
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
-  const [d, reload, loading] = useLoad(async () => ({ customer: await getCustomer(id), rows: await getStatement(id) }), [id]);
+  const [d, reload, loading, error] = useLoad(async () => ({ customer: await getCustomer(id), rows: await getStatement(id) }), { deps: [id] });
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('Cash');
@@ -25,6 +25,7 @@ export default function CustomerDetail() {
   const keyRef = useRef(uid());
 
   if (loading && !d) return <ScreenShimmer variant="detail" />;
+  if (!d && error) return <LoadError error={error} onRetry={reload} />;
   if (!d?.customer) return <View style={screenStyle} />;
   const { customer: c, rows } = d;
   const used = c.credit_limit > 0 ? Math.min(1, Math.max(0, c.balance) / c.credit_limit) : 0;

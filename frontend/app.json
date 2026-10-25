@@ -10,7 +10,6 @@
     "backgroundColor": "#1E3A2B",
     "plugins": [
       "expo-router",
-      "expo-sqlite",
       "expo-font",
       [
         "expo-splash-screen",
@@ -40,7 +39,8 @@
         }
       ],
       "expo-sharing",
-      "expo-asset"
+      "expo-asset",
+      "expo-sqlite"
     ],
     "android": {
       "package": "com.manusresto.manager",

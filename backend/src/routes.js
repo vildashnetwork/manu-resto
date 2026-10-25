@@ -104,6 +104,39 @@ router.get('/health', (req, res) => {
   res.json({ status: 'ok', database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
 });
 
+router.get('/sync/snapshot', asyncRoute(async (req, res) => {
+  const [products, customers, sales, payments, ledger, expenses, movements, setting] = await Promise.all([
+    Product.find({ active: true }).sort({ category: 1, name: 1 }).lean(),
+    Customer.find({ active: true }).sort({ name: 1 }).lean(),
+    Sale.find().sort({ created_at: -1 }).lean(),
+    Payment.find().sort({ created_at: -1 }).lean(),
+    Ledger.find().sort({ created_at: -1 }).lean(),
+    Expense.find().sort({ created_at: -1 }).lean(),
+    StockMovement.find().sort({ created_at: -1 }).lean(),
+    getSettings(),
+  ]);
+  const serializeRows = (rows) => rows.map((row) => ({
+    ...row,
+    id: String(row._id),
+    ...(row.customerId ? { customerId: String(row.customerId) } : {}),
+    ...(row.productId ? { productId: String(row.productId) } : {}),
+    ...(row.saleId ? { saleId: String(row.saleId) } : {}),
+  }));
+  res.json({
+    snapshot: {
+      products: products.map(serializeProduct),
+      customers: customers.map(serializeCustomer),
+      sales: sales.map(serializeSale),
+      payments: serializeRows(payments),
+      ledger: serializeRows(ledger),
+      expenses: serializeRows(expenses),
+      movements: serializeRows(movements),
+      settings: [{ id: 'main', ...serializeSetting(setting) }],
+    },
+    generatedAt: now(),
+  });
+}));
+
 router.get('/settings', asyncRoute(async (req, res) => {
   res.json({ settings: serializeSetting(await getSettings()) });
 }));
@@ -130,47 +163,23 @@ router.put('/settings', asyncRoute(async (req, res) => {
   res.json({ settings: serializeSetting(setting) });
 }));
 
-router.get('/sync/snapshot', asyncRoute(async (req, res) => {
-  const [products, customers, sales, payments, ledger, stockMovements, expenses] = await Promise.all([
-    Product.find({ active: true }).sort({ category: 1, name: 1 }).lean(),
-    Customer.find({ active: true }).sort({ name: 1 }).lean(),
-    Sale.find({}).sort({ created_at: 1 }).lean(),
-    Payment.find({}).sort({ created_at: 1 }).lean(),
-    Ledger.find({}).sort({ created_at: 1 }).lean(),
-    StockMovement.find({}).sort({ created_at: 1 }).lean(),
-    Expense.find({}).sort({ created_at: 1 }).lean(),
-  ]);
-  res.json({
-    snapshot: {
-      products: products.map(serializeProduct),
-      customers: customers.map(serializeCustomer),
-      sales: sales.map(serializeSale),
-      payments,
-      ledger,
-      stockMovements,
-      expenses,
-      syncedAt: now(),
-    },
-  });
-}));
-
 router.get('/products', asyncRoute(async (req, res) => {
   const products = await Product.find({ active: true }).sort({ category: 1, name: 1 }).lean();
   res.json({ products: products.map(serializeProduct) });
 }));
 
 router.post('/products', asyncRoute(async (req, res) => {
-  const { name, category, unit, price, cost, lowStockThreshold, threshold, tracked, openingStock, imageUrl, barcode, syncKey } = req.body;
+  const { name, category, unit, price, cost, lowStockThreshold, threshold, tracked, openingStock, imageUrl, barcode, idempotencyKey } = req.body;
+  if (typeof idempotencyKey === 'string' && idempotencyKey.trim()) {
+    const existing = await Product.findOne({ idempotencyKey: idempotencyKey.trim() });
+    if (existing) return res.json({ product: serializeProduct(existing), duplicate: true });
+  }
   if (typeof name !== 'string' || !name.trim()) throw httpError(400, 'Product name is required.');
   if (!Number.isSafeInteger(price) || price < 1) throw httpError(400, 'Selling price must be a positive whole number.');
   if (!imageUrl || typeof imageUrl !== 'string' || !/^https:\/\//i.test(imageUrl)) {
     throw httpError(400, 'A valid HTTPS product image URL is required.');
   }
   const normalizedBarcode = typeof barcode === 'string' ? barcode.trim() || null : null;
-  if (typeof syncKey === 'string' && syncKey.trim()) {
-    const duplicate = await Product.findOne({ syncKey: syncKey.trim(), active: true });
-    if (duplicate) return res.json({ product: serializeProduct(duplicate), duplicate: true });
-  }
   if (normalizedBarcode && await Product.exists({ barcode: normalizedBarcode })) {
     throw httpError(409, 'That barcode is already assigned to another product.');
   }
@@ -191,7 +200,9 @@ router.post('/products', asyncRoute(async (req, res) => {
       tracked: Boolean(tracked),
       stock: Boolean(tracked) ? initialStock : 0,
       imageUrl,
-      syncKey: typeof syncKey === 'string' ? syncKey.trim() || null : null,
+      ...(typeof idempotencyKey === 'string' && idempotencyKey.trim()
+        ? { idempotencyKey: idempotencyKey.trim() }
+        : {}),
     }], { session, ordered: true });
 
     if (created.tracked && initialStock > 0) {
@@ -200,6 +211,9 @@ router.post('/products', asyncRoute(async (req, res) => {
         type: 'opening',
         qty: initialStock,
         note: 'Opening stock',
+        ...(typeof idempotencyKey === 'string' && idempotencyKey.trim()
+          ? { idempotencyKey: `${idempotencyKey.trim()}:opening-stock` }
+          : {}),
       }], { session, ordered: true });
     }
     return created;
@@ -260,6 +274,13 @@ router.put('/products/:id', asyncRoute(async (req, res) => {
 
 router.post('/stock/movements', asyncRoute(async (req, res) => {
   const { productId, type, qty, note, idempotencyKey } = req.body;
+  if (typeof idempotencyKey === 'string' && idempotencyKey.trim()) {
+    const existing = await StockMovement.findOne({ idempotencyKey: idempotencyKey.trim() });
+    if (existing) {
+      const product = await Product.findById(existing.productId);
+      return res.json({ product: product ? serializeProduct(product) : null, duplicate: true });
+    }
+  }
   if (!isId(productId)) throw httpError(400, 'Invalid product ID.');
   if (!Number.isSafeInteger(qty) || qty === 0) throw httpError(400, 'Quantity must be a non-zero whole number.');
   const addTypes = new Set(['purchase', 'adjust_up']);
@@ -268,14 +289,6 @@ router.post('/stock/movements', asyncRoute(async (req, res) => {
   if ((addTypes.has(type) && qty < 0) || (removeTypes.has(type) && qty > 0)) {
     throw httpError(400, 'Quantity sign does not match the stock movement type.');
   }
-  if (typeof idempotencyKey === 'string' && idempotencyKey.trim()) {
-    const duplicate = await StockMovement.findOne({ idempotencyKey: idempotencyKey.trim() });
-    if (duplicate) {
-      const product = await Product.findById(productId);
-      return res.json({ duplicate: true, product: product ? serializeProduct(product) : null });
-    }
-  }
-
   const result = await withTransaction(async (session) => {
     const filter = { _id: productId, active: true, tracked: true };
     if (qty < 0) filter.stock = { $gte: Math.abs(qty) };
@@ -294,7 +307,9 @@ router.post('/stock/movements', asyncRoute(async (req, res) => {
       type,
       qty,
       note: typeof note === 'string' ? note.trim() || null : null,
-      idempotencyKey: typeof idempotencyKey === 'string' ? idempotencyKey.trim() || null : null,
+      ...(typeof idempotencyKey === 'string' && idempotencyKey.trim()
+        ? { idempotencyKey: idempotencyKey.trim() }
+        : {}),
     }], { session, ordered: true });
     return {
       product: updated,
@@ -313,17 +328,16 @@ router.get('/customers', asyncRoute(async (req, res) => {
 }));
 
 router.post('/customers', asyncRoute(async (req, res) => {
-  const { name, phone, code, creditLimit, openingDebt, notes, syncKey } = req.body;
+  const { name, phone, code, creditLimit, openingDebt, notes, idempotencyKey } = req.body;
+  if (typeof idempotencyKey === 'string' && idempotencyKey.trim()) {
+    const existing = await Customer.findOne({ idempotencyKey: idempotencyKey.trim() });
+    if (existing) return res.json({ customer: serializeCustomer(existing), duplicate: true });
+  }
   if (typeof name !== 'string' || !name.trim()) throw httpError(400, 'Customer name is required.');
   const limit = creditLimit ?? 0;
   const debt = openingDebt ?? 0;
   if (!Number.isSafeInteger(limit) || limit < 0) throw httpError(400, 'Credit limit must be a non-negative whole number.');
   if (!Number.isSafeInteger(debt) || debt < 0) throw httpError(400, 'Opening debt must be a non-negative whole number.');
-  if (typeof syncKey === 'string' && syncKey.trim()) {
-    const duplicate = await Customer.findOne({ syncKey: syncKey.trim(), active: true });
-    if (duplicate) return res.json({ customer: serializeCustomer(duplicate), duplicate: true });
-  }
-
   const customer = await withTransaction(async (session) => {
     const [created] = await Customer.create([{
       name: name.trim(),
@@ -332,7 +346,9 @@ router.post('/customers', asyncRoute(async (req, res) => {
       creditLimit: limit,
       balance: debt,
       notes: typeof notes === 'string' ? notes.trim() || null : null,
-      syncKey: typeof syncKey === 'string' ? syncKey.trim() || null : null,
+      ...(typeof idempotencyKey === 'string' && idempotencyKey.trim()
+        ? { idempotencyKey: idempotencyKey.trim() }
+        : {}),
     }], { session, ordered: true });
     if (debt > 0) {
       await Ledger.create([{
@@ -341,6 +357,9 @@ router.post('/customers', asyncRoute(async (req, res) => {
         amount: debt,
         ref_type: 'migration',
         note: 'Opening balance (migrated from paper book)',
+        ...(typeof idempotencyKey === 'string' && idempotencyKey.trim()
+          ? { idempotencyKey: `${idempotencyKey.trim()}:opening-ledger` }
+          : {}),
       }], { session, ordered: true });
     }
     return created;
@@ -403,6 +422,7 @@ router.post('/payments/repayments', asyncRoute(async (req, res) => {
         ref_type: 'payment',
         ref_id: String(payment._id),
         note: `Repayment (${method})`,
+        idempotencyKey: `${idempotencyKey.trim()}:ledger`,
       }], { session, ordered: true });
       return payment;
     });
@@ -526,6 +546,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
           ref_type: 'sale',
           ref_id: String(created._id),
           note: `Credit sale ${receiptNo}`,
+          idempotencyKey: `${idempotencyKey.trim()}:ledger`,
         }], { session, ordered: true });
       }
       const movements = saleItems
@@ -535,6 +556,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
           type: 'sale',
           qty: -item.qty,
           refId: String(created._id),
+          idempotencyKey: `${idempotencyKey.trim()}:movement:${String(item.productId)}`,
         }));
       if (movements.length) await StockMovement.create(movements, { session, ordered: true });
       return {
@@ -610,6 +632,7 @@ router.put('/sales/:id/payment', asyncRoute(async (req, res) => {
           ref_type: 'sale_adjustment',
           ref_id: String(current._id),
           note: `Payment adjusted for sale ${current.receipt_no}`,
+          idempotencyKey: `${key}:ledger`,
         }], { session, ordered: true });
       }
 
@@ -686,6 +709,7 @@ router.post('/sales/:id/cancel', asyncRoute(async (req, res) => {
         qty: item.qty,
         note: reason.trim(),
         refId: String(current._id),
+        idempotencyKey: `${current.idempotencyKey}:cancel:${String(product._id)}`,
       }], { session, ordered: true });
     }
 
@@ -698,6 +722,7 @@ router.post('/sales/:id/cancel', asyncRoute(async (req, res) => {
         ref_type: 'sale',
         ref_id: String(current._id),
         note: `Cancelled sale ${current.receipt_no}: ${reason.trim()}`,
+        idempotencyKey: `${current.idempotencyKey}:cancel-ledger`,
       }], { session, ordered: true });
     }
     await Payment.updateMany({ saleId: current._id, status: 'ok' }, { $set: { status: 'reversed' } }, { session });
@@ -711,19 +736,21 @@ router.post('/sales/:id/cancel', asyncRoute(async (req, res) => {
 
 router.post('/expenses', asyncRoute(async (req, res) => {
   const { category, amount, method, note, idempotencyKey } = req.body;
+  if (typeof idempotencyKey === 'string' && idempotencyKey.trim()) {
+    const existing = await Expense.findOne({ idempotencyKey: idempotencyKey.trim() }).lean();
+    if (existing) return res.json({ expense: { ...existing, id: String(existing._id) }, duplicate: true });
+  }
   if (typeof category !== 'string' || !category.trim()) throw httpError(400, 'Expense category is required.');
   if (!Number.isSafeInteger(amount) || amount < 1) throw httpError(400, 'Amount must be a positive whole number.');
   if (!METHODS.includes(method)) throw httpError(400, 'Invalid payment method.');
-  if (typeof idempotencyKey === 'string' && idempotencyKey.trim()) {
-    const duplicate = await Expense.findOne({ idempotencyKey: idempotencyKey.trim() });
-    if (duplicate) return res.json({ expense: { ...duplicate.toObject(), id: String(duplicate._id) }, duplicate: true });
-  }
   const expense = await Expense.create({
     category: category.trim(),
     amount,
     method,
     note: typeof note === 'string' ? note.trim() || null : null,
-    idempotencyKey: typeof idempotencyKey === 'string' ? idempotencyKey.trim() || null : null,
+    ...(typeof idempotencyKey === 'string' && idempotencyKey.trim()
+      ? { idempotencyKey: idempotencyKey.trim() }
+      : {}),
   });
   void notifyAdmin('expenses', 'New expense recorded', `${expense.category}: FCFA ${expense.amount.toLocaleString()} (${expense.method})${expense.note ? `\n${expense.note}` : ''}.`);
   res.status(201).json({ expense: { ...expense.toObject(), id: String(expense._id) }, duplicate: false });

@@ -3,7 +3,7 @@ import { ScrollView, View, Text, Image, Alert, Pressable, StyleSheet, Modal } fr
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import {
-  Hero, Card, Btn, Chip, Field, SearchBox, Sheet, IconDot, Pill, Empty, Fab, useLoad, ScreenShimmer, screenStyle, body,
+  Hero, Card, Btn, Chip, Field, SearchBox, Sheet, IconDot, Pill, Empty, Fab, LoadError, useLoad, ScreenShimmer, screenStyle, body,
 } from '../../src/components/ui';
 import { getProducts, createProduct, updateProduct, addStockMovement } from '../../src/api/repo';
 import { chooseAndUploadProductImage } from '../../src/api/cloudinary';
@@ -22,7 +22,7 @@ const MOVES = [
 const EMPTY = { name: '', category: 'Meals', unit: '', price: '', cost: '', threshold: '', opening: '', tracked: false, barcode: '' };
 
 export default function Stock() {
-  const [products, reload, loading] = useLoad(getProducts);
+  const [products, reload, loading, error] = useLoad(getProducts);
   const [add, setAdd] = useState(false);
   const [editing, setEditing] = useState(null);
   const [f, setF] = useState(EMPTY);
@@ -35,6 +35,7 @@ export default function Stock() {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
   const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
+  const [barcodeScanAction, setBarcodeScanAction] = useState('assign');
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
   async function chooseImage() {
@@ -62,8 +63,20 @@ export default function Stock() {
         name: f.name, category: f.category, unit: f.unit, price: parseAmount(f.price), cost: parseAmount(f.cost),
         threshold: parseAmount(f.threshold), tracked: f.tracked, openingStock: parseAmount(f.opening), imageUrl, barcode: f.barcode,
       };
-      if (editing) await updateProduct(editing.id, product);
-      else await createProduct(product);
+      if (editing) {
+        await updateProduct(editing.id, product);
+        if (editing.tracked) {
+          const quantityChange = parseAmount(f.quantity) - Number(editing.stock || 0);
+          if (quantityChange !== 0) {
+            await addStockMovement({
+              productId: editing.id,
+              type: quantityChange > 0 ? 'adjust_up' : 'adjust_down',
+              qty: quantityChange,
+              note: 'Quantity updated from product editor',
+            });
+          }
+        }
+      } else await createProduct(product);
       setF(EMPTY); setImageUrl(''); setAdd(false); setEditing(null); reload();
     } catch (e) {
       Alert.alert('Cannot save product', e.message);
@@ -92,6 +105,7 @@ export default function Stock() {
       cost: String(product.cost || 0),
       threshold: String(product.low_stock_threshold || 0),
       opening: '',
+      quantity: String(Math.max(0, Number(product.stock) || 0)),
       tracked: product.tracked,
       barcode: product.barcode || '',
     });
@@ -106,7 +120,7 @@ export default function Stock() {
     setAdd(true);
   }
 
-  async function openBarcodeScanner() {
+  async function openBarcodeScanner(action = 'assign') {
     if (!cameraPermission?.granted) {
       const permission = await requestCameraPermission();
       if (!permission.granted) {
@@ -114,6 +128,7 @@ export default function Stock() {
         return;
       }
     }
+    setBarcodeScanAction(action);
     setBarcodeScannerOpen(true);
   }
 
@@ -121,6 +136,17 @@ export default function Stock() {
     const barcode = String(data || '').trim();
     if (!barcode) return;
     setBarcodeScannerOpen(false);
+    if (barcodeScanAction === 'edit') {
+      const product = allProducts.find(
+        (item) => item.barcode?.trim().toLowerCase() === barcode.toLowerCase()
+      );
+      if (!product) {
+        Alert.alert('Product not found', `No product is assigned to barcode ${barcode}.`);
+        return;
+      }
+      editProduct(product);
+      return;
+    }
     const duplicate = allProducts.find(
       (product) => product.id !== editing?.id && product.barcode?.trim().toLowerCase() === barcode.toLowerCase()
     );
@@ -138,14 +164,20 @@ export default function Stock() {
 
   const allProducts = products ?? [];
   const categories = useMemo(() => ['All', ...Array.from(new Set(allProducts.map((p) => p.category)))], [allProducts]);
-  const list = allProducts.filter((p) =>
-    (category === 'All' || p.category === category) &&
-    (p.name + ' ' + (p.barcode || '')).toLowerCase().includes(search.trim().toLowerCase())
+  const list = useMemo(
+    () =>
+      allProducts.filter(
+        (p) =>
+          (category === 'All' || p.category === category) &&
+          (p.name + ' ' + (p.barcode || '')).toLowerCase().includes(search.trim().toLowerCase()),
+      ),
+    [allProducts, category, search],
   );
   const tracked = allProducts.filter((p) => p.tracked);
   const lowCount = tracked.filter((p) => p.low_stock_threshold > 0 && p.stock <= p.low_stock_threshold).length;
 
   if (loading && !products) return <ScreenShimmer variant="list" />;
+  if (!products && error) return <LoadError error={error} onRetry={reload} />;
 
   return (
     <View style={screenStyle}>
@@ -161,7 +193,18 @@ export default function Stock() {
         </Hero>
 
         <View style={body}>
-          <SearchBox value={search} onChangeText={setSearch} placeholder="Search products or barcode…" />
+          <View style={s.stockSearchRow}>
+            <SearchBox value={search} onChangeText={setSearch} placeholder="Search products or barcode…" style={{ flex: 1 }} />
+            <Pressable
+              onPress={() => openBarcodeScanner('edit')}
+              style={({ pressed }) => [s.scanStockButton, { opacity: pressed ? 0.78 : 1 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Scan barcode to edit product"
+            >
+              <Ionicons name="barcode-outline" size={21} color={colors.forest} />
+              <Text style={s.scanStockText}>Scan</Text>
+            </Pressable>
+          </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 12, marginBottom: 6 }}>
             {categories.map((c) => (
               <Chip key={c} label={c} icon={c === 'All' ? 'apps-outline' : CATEGORY_ICONS[c] || 'pricetag-outline'} active={category === c} onPress={() => setCategory(c)} />
@@ -262,6 +305,15 @@ export default function Stock() {
         {editing && (
           <Field label="Low-stock warning at" keyboardType="number-pad" value={f.threshold} onChangeText={(v) => setF({ ...f, threshold: v })} />
         )}
+        {editing?.tracked && (
+          <Field
+            label={`Current quantity${editing.unit ? ` (${editing.unit})` : ''}`}
+            keyboardType="number-pad"
+            value={f.quantity}
+            onChangeText={(v) => setF({ ...f, quantity: v })}
+            placeholder="Enter the counted quantity"
+          />
+        )}
         {!editing && (
           <Pressable onPress={() => setF({ ...f, tracked: !f.tracked })} style={s.toggle}>
             <Ionicons name={f.tracked ? 'checkbox' : 'square-outline'} size={24} color={colors.forest} />
@@ -340,6 +392,9 @@ export default function Stock() {
 }
 
 const s = StyleSheet.create({
+  stockSearchRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  scanStockButton: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 12, borderRadius: radius.md, borderWidth: 1, borderColor: colors.forestTint, backgroundColor: colors.forestTint },
+  scanStockText: { color: colors.forest, fontSize: 13, fontWeight: '700' },
   heroRow: { flexDirection: 'row', gap: 10, marginTop: 20 },
   heroBox: { flex: 1, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: radius.md, padding: 12 },
   heroNum: { color: '#fff', fontSize: 26, fontWeight: '800' },

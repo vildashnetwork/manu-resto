@@ -34,12 +34,12 @@ function Mini({ label, value }) {
 export default function Reports() {
   const [range, setRange] = useState(() => { const [a, b] = PRESETS.Today(); return { from: a, to: b }; });
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [d, reload, loading] = useLoad(async () => {
+  const [d, reload, loading, error] = useLoad(async () => {
     const from = range.from;
     const to = dayEnd(range.to);
     const [report, sales] = await Promise.all([getReport(from, to), getRecentSales(100, from, to)]);
     return { report, sales };
-  }, [range.from, range.to]);
+  }, { deps: [range.from, range.to] });
 
   const [expOpen, setExpOpen] = useState(false);
   const [expCat, setExpCat] = useState('Supplies');

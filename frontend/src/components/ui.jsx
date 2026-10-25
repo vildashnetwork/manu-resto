@@ -1,34 +1,108 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, TextInput, Pressable, Modal, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, Alert, Animated,
+  View, Text, TextInput, Pressable, Modal, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
 import { colors, radius } from '../theme';
 import { fcfa } from '../utils';
 
-// Loads data whenever the screen gains focus; returns [data, reload].
-export function useLoad(loader, deps = []) {
+// Loads data once on mount and returns [data, reload, loading, error].
+// An abortable timeout prevents the shimmer from being stuck forever when the
+// backend / database is slow or unreachable. Errors are surfaced as state
+// (never a blocking alert) so screens can show an inline retry instead of a
+// frozen shimmer. Cached data is returned immediately so screens feel instant.
+export function useLoad(loader, { timeoutMs = 15000, deps } = {}) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const mounted = useRef(true);
+  const abortRef = useRef(null);
+  const timerRef = useRef(null);
+  const loaderRef = useRef(loader);
+  const dataRef = useRef(data);
+
+  // Always reload with the latest loader + data snapshot.
+  loaderRef.current = loader;
+  dataRef.current = data;
+
+  const clearTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
   const run = useCallback(async () => {
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    clearTimer();
+    let resolved = false;
+
+    if (timeoutMs) {
+      timerRef.current = setTimeout(() => {
+        resolved = true;
+        controller.abort();
+        if (mounted.current) {
+          if (!dataRef.current) setError(new Error('Loading timed out. Check your connection or try again.'));
+          setLoading(false);
+        }
+      }, timeoutMs);
+    }
+
     setLoading(true);
     try {
-      setData(await loader());
+      const result = await loaderRef.current();
+      if (controller.signal.aborted || !mounted.current) return;
+      clearTimer();
+      setData(result);
+      setError(null);
     } catch (e) {
+      if (!mounted.current) return;
+      if (controller.signal.aborted) {
+        if (!resolved) {
+          if (!dataRef.current) setError(e);
+          setLoading(false);
+        }
+        return;
+      }
+      clearTimer();
+      resolved = true;
       console.warn('load failed', e);
-      Alert.alert('Could not load data', e.message || String(e));
-    } finally {
+      setError(e);
       setLoading(false);
+    } finally {
+      if (!resolved && mounted.current && !controller.signal.aborted) {
+        setLoading(false);
+      }
     }
+  }, [timeoutMs, clearTimer]);
+
+  const depList = deps ?? [];
+  useEffect(() => {
+    mounted.current = true;
+    run();
+    return () => {
+      mounted.current = false;
+      clearTimer();
+      if (abortRef.current) abortRef.current.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  useFocusEffect(
-    useCallback(() => {
-      run();
-    }, [run])
+  }, [run, clearTimer, ...depList]);
+
+  return [data, run, loading, error];
+}
+
+// Inline error state with a retry button (replaces blocking alerts / frozen shimmer).
+export function LoadError({ error, onRetry }) {
+  return (
+    <Card style={s.errorCard}>
+      <Ionicons name="alert-circle-outline" size={32} color={colors.danger} style={s.errorIcon} />
+      <Text style={s.errorTitle}>Could not load data</Text>
+      <Text style={s.errorText}>{error?.message || String(error || 'Unknown error')}</Text>
+      <Btn title="Try again" icon="refresh" onPress={onRetry} variant="primary" style={s.errorBtn} />
+    </Card>
   );
-  return [data, run, loading];
 }
 
 export function ShimmerBlock({ width = '100%', height = 16, radius: cornerRadius = 8, style }) {
@@ -395,6 +469,11 @@ const s = StyleSheet.create({
   empty: { alignItems: 'center', justifyContent: 'center', paddingVertical: 20, gap: 9 },
   emptyTitle: { color: colors.muted, fontSize: 13, textAlign: 'center' },
   emptyHint: { color: colors.muted, fontSize: 12, lineHeight: 18, textAlign: 'center', paddingHorizontal: 20 },
+  errorCard: { alignItems: 'center', paddingVertical: 40, gap: 10, backgroundColor: '#fffef6', borderRadius: 16, borderWidth: 1, borderColor: '#f3e3c5', marginHorizontal: 24 },
+  errorIcon: { marginBottom: 6 },
+  errorTitle: { fontSize: 16, fontWeight: '800', color: colors.ink },
+  errorText: { fontSize: 13, color: colors.muted, textAlign: 'center', marginHorizontal: 10 },
+  errorBtn: { marginTop: 8 },
   fab: { position: 'absolute', right: 18, bottom: 20, minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 18, borderRadius: 26, backgroundColor: colors.forest, elevation: 6, shadowColor: '#142A1E', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.25, shadowRadius: 6 },
   fabText: { color: '#fff', fontSize: 14, fontWeight: '800' },
   searchBox: { minHeight: 46, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, backgroundColor: '#fff', borderWidth: 1, borderColor: colors.line, borderRadius: radius.md },

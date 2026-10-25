@@ -70,7 +70,7 @@ export default function Settings() {
             <Text style={s.senderLabel}>Email sender</Text>
             <Text style={s.senderValue}>{senderEmail || 'Not configured on backend'}</Text>
             <Text style={[s.senderStatus, { color: senderConfigured ? colors.ok : colors.warn }]}>
-              {senderConfigured ? 'Brevo is configured' : 'Set BREVO_API_KEY and BREVO_SENDER_EMAIL in backend environment variables.'}
+              {senderConfigured ? 'email is configured' : 'Set your email to get notifications.'}
             </Text>
           </View>
         </Card>

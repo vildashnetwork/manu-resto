@@ -650,8 +650,10 @@ export default function Sales() {
           <CameraView
             style={StyleSheet.absoluteFill}
             facing="back"
+            autofocus="on"
             onBarcodeScanned={onBarcodeScanned}
-            barcodeScannerSettings={{ barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'code128', 'code39', 'itf14', 'qr'] }}
+            barcodeScannerSettings={{ barcodeTypes: ['aztec', 'ean13', 'ean8', 'qr', 'pdf417', 'upc_e', 'datamatrix', 'code39', 'code93', 'itf14', 'codabar', 'code128', 'upc_a'] }}
+            onMountError={(event) => Alert.alert('Camera unavailable', event.message)}
           />
           <View style={s.scanOverlay} pointerEvents="box-none">
             <View style={s.scanHeader}>

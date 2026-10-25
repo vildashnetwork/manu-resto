@@ -8,8 +8,10 @@ import {
   Product,
   Sale,
   SaleAdjustment,
+  Setting,
   StockMovement,
 } from './models.js';
+import { notifyAdmin } from './email.js';
 
 const router = Router();
 const METHODS = ['Cash', 'MTN MoMo', 'Xcash', 'Orange Money', 'Bank transfer'];
@@ -68,6 +70,23 @@ function serializeSale(sale) {
   };
 }
 
+function serializeSetting(setting) {
+  return {
+    adminEmail: setting.adminEmail,
+    notifications: setting.notifications,
+    senderEmail: process.env.BREVO_SENDER_EMAIL || '',
+    senderConfigured: Boolean(process.env.BREVO_API_KEY && process.env.BREVO_SENDER_EMAIL),
+  };
+}
+
+function getSettings() {
+  return Setting.findByIdAndUpdate(
+    'main',
+    { $setOnInsert: {} },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  );
+}
+
 async function withTransaction(callback) {
   const session = await mongoose.startSession();
   try {
@@ -84,6 +103,32 @@ async function withTransaction(callback) {
 router.get('/health', (req, res) => {
   res.json({ status: 'ok', database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
 });
+
+router.get('/settings', asyncRoute(async (req, res) => {
+  res.json({ settings: serializeSetting(await getSettings()) });
+}));
+
+router.put('/settings', asyncRoute(async (req, res) => {
+  const { adminEmail, notifications } = req.body;
+  if (typeof adminEmail !== 'string') throw httpError(400, 'A notification email address is required.');
+  const normalizedEmail = adminEmail.trim().toLowerCase();
+  if (normalizedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    throw httpError(400, 'Enter a valid notification email address.');
+  }
+  if (!notifications || typeof notifications !== 'object' || Array.isArray(notifications)) {
+    throw httpError(400, 'Notification preferences are required.');
+  }
+  for (const key of ['lowStock', 'creditDebt', 'expenses']) {
+    if (typeof notifications[key] !== 'boolean') throw httpError(400, `Invalid ${key} notification preference.`);
+  }
+
+  const setting = await Setting.findByIdAndUpdate(
+    'main',
+    { $set: { adminEmail: normalizedEmail, notifications } },
+    { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+  );
+  res.json({ settings: serializeSetting(setting) });
+}));
 
 router.get('/products', asyncRoute(async (req, res) => {
   const products = await Product.find({ active: true }).sort({ category: 1, name: 1 }).lean();
@@ -131,6 +176,9 @@ router.post('/products', asyncRoute(async (req, res) => {
     return created;
   });
 
+  if (product.tracked && product.lowStockThreshold > 0 && product.stock <= product.lowStockThreshold) {
+    void notifyAdmin('lowStock', 'Low stock alert', `${product.name} has ${product.stock} ${product.unit || 'units'} remaining (threshold: ${product.lowStockThreshold}).`);
+  }
   res.status(201).json({ product: serializeProduct(product) });
 }));
 
@@ -165,12 +213,19 @@ router.put('/products/:id', asyncRoute(async (req, res) => {
     updates.barcode = barcode;
   }
   if (!Object.keys(updates).length) throw httpError(400, 'No supported product fields to update.');
+  const previous = await Product.findOne({ _id: req.params.id, active: true }).lean();
+  if (!previous) throw httpError(404, 'Product not found.');
   const product = await Product.findOneAndUpdate(
     { _id: req.params.id, active: true },
     { $set: updates },
     { new: true, runValidators: true }
   );
   if (!product) throw httpError(404, 'Product not found.');
+  const wasAboveThreshold = previous.tracked && previous.lowStockThreshold > 0 && previous.stock > previous.lowStockThreshold;
+  const isAtOrBelowThreshold = product.tracked && product.lowStockThreshold > 0 && product.stock <= product.lowStockThreshold;
+  if (wasAboveThreshold && isAtOrBelowThreshold) {
+    void notifyAdmin('lowStock', 'Low stock alert', `${product.name} has ${product.stock} ${product.unit || 'units'} remaining (threshold: ${product.lowStockThreshold}).`);
+  }
   res.json({ product: serializeProduct(product) });
 }));
 
@@ -185,13 +240,17 @@ router.post('/stock/movements', asyncRoute(async (req, res) => {
     throw httpError(400, 'Quantity sign does not match the stock movement type.');
   }
 
-  const product = await withTransaction(async (session) => {
+  const result = await withTransaction(async (session) => {
     const filter = { _id: productId, active: true, tracked: true };
     if (qty < 0) filter.stock = { $gte: Math.abs(qty) };
-    const updated = await Product.findOneAndUpdate(filter, { $inc: { stock: qty } }, { new: true, session });
-    if (!updated) {
+    const before = await Product.findOne(filter).session(session);
+    if (!before) {
       const exists = await Product.exists({ _id: productId, active: true }).session(session);
       if (!exists) throw httpError(404, 'Product not found.');
+      throw httpError(409, 'Insufficient stock or stock tracking is disabled.');
+    }
+    const updated = await Product.findOneAndUpdate(filter, { $inc: { stock: qty } }, { new: true, session });
+    if (!updated) {
       throw httpError(409, 'Insufficient stock or stock tracking is disabled.');
     }
     await StockMovement.create([{
@@ -200,9 +259,15 @@ router.post('/stock/movements', asyncRoute(async (req, res) => {
       qty,
       note: typeof note === 'string' ? note.trim() || null : null,
     }], { session, ordered: true });
-    return updated;
+    return {
+      product: updated,
+      becameLow: before.lowStockThreshold > 0 && before.stock > before.lowStockThreshold && updated.stock <= updated.lowStockThreshold,
+    };
   });
-  res.status(201).json({ product: serializeProduct(product) });
+  if (result.becameLow) {
+    void notifyAdmin('lowStock', 'Low stock alert', `${result.product.name} has ${result.product.stock} ${result.product.unit || 'units'} remaining (threshold: ${result.product.lowStockThreshold}).`);
+  }
+  res.status(201).json({ product: serializeProduct(result.product) });
 }));
 
 router.get('/customers', asyncRoute(async (req, res) => {
@@ -238,6 +303,9 @@ router.post('/customers', asyncRoute(async (req, res) => {
     }
     return created;
   });
+  if (debt > 0) {
+    void notifyAdmin('creditDebt', 'Customer debt added', `${customer.name} has an opening debt of FCFA ${debt.toLocaleString()}. Current balance: FCFA ${customer.balance.toLocaleString()}.`);
+  }
   res.status(201).json({ customer: serializeCustomer(customer) });
 }));
 
@@ -323,7 +391,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
   });
 
   try {
-    const sale = await withTransaction(async (session) => {
+    const result = await withTransaction(async (session) => {
       const ids = items.map((item) => item.productId);
       if (ids.some((id) => !isId(id))) throw httpError(400, 'A cart item has an invalid product ID.');
       const uniqueIds = [...new Set(ids.map(String))];
@@ -367,6 +435,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
         customer = await Customer.findOne({ _id: customerId, active: true }).session(session);
       }
 
+      const lowStockAlerts = [];
       for (const [productId, product] of productById) {
         if (!product.tracked) continue;
         const quantity = saleItems
@@ -378,6 +447,10 @@ router.post('/sales', asyncRoute(async (req, res) => {
           { session }
         );
         if (updated.modifiedCount !== 1) throw httpError(409, `Not enough stock for ${product.name}.`);
+        const remaining = product.stock - quantity;
+        if (product.lowStockThreshold > 0 && product.stock > product.lowStockThreshold && remaining <= product.lowStockThreshold) {
+          lowStockAlerts.push({ name: product.name, unit: product.unit, stock: remaining, threshold: product.lowStockThreshold });
+        }
       }
 
       const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -422,9 +495,22 @@ router.post('/sales', asyncRoute(async (req, res) => {
           refId: String(created._id),
         }));
       if (movements.length) await StockMovement.create(movements, { session, ordered: true });
-      return created;
+      return {
+        sale: created,
+        lowStockAlerts,
+        debtAlert: credit > 0
+          ? { customerName: customer.name, credit, balance: customer.balance + credit }
+          : null,
+      };
     });
-    res.status(201).json({ sale: serializeSale(sale), duplicate: false });
+    for (const item of result.lowStockAlerts) {
+      void notifyAdmin('lowStock', 'Low stock alert', `${item.name} has ${item.stock} ${item.unit || 'units'} remaining (threshold: ${item.threshold}).`);
+    }
+    if (result.debtAlert) {
+      const { customerName: name, credit, balance } = result.debtAlert;
+      void notifyAdmin('creditDebt', 'Customer debt increased', `${name}'s debt increased by FCFA ${credit.toLocaleString()}. Current balance: FCFA ${balance.toLocaleString()}.`);
+    }
+    res.status(201).json({ sale: serializeSale(result.sale), duplicate: false });
   } catch (error) {
     if (error.code === 11000) {
       const duplicate = await Sale.findOne({ idempotencyKey: idempotencyKey.trim() });
@@ -448,13 +534,14 @@ router.put('/sales/:id/payment', asyncRoute(async (req, res) => {
   }
 
   try {
-    const sale = await withTransaction(async (session) => {
+    const result = await withTransaction(async (session) => {
       const current = await Sale.findById(req.params.id).session(session);
       if (!current) throw httpError(404, 'Sale not found.');
       if (current.status !== 'completed') throw httpError(409, 'Cancelled sales cannot be edited.');
       if (paidAmount > current.total) throw httpError(400, 'Paid amount cannot exceed the sale total.');
       const nextCredit = current.total - paidAmount;
       const creditDelta = nextCredit - current.credit_amount;
+      let debtAlert = null;
 
       if (creditDelta !== 0) {
         if (!current.customerId) throw httpError(400, 'A customer account is required to change this sale’s credit.');
@@ -471,6 +558,9 @@ router.put('/sales/:id/payment', asyncRoute(async (req, res) => {
           throw httpError(409, 'This customer has already repaid part of this credit. The paid amount cannot be increased safely.');
         }
         await Customer.updateOne({ _id: customer._id }, { $inc: { balance: creditDelta } }, { session });
+        if (creditDelta > 0) {
+          debtAlert = { customerName: customer.name, credit: creditDelta, balance: customer.balance + creditDelta };
+        }
         await Ledger.create([{
           customerId: customer._id,
           type: creditDelta > 0 ? 'credit_sale' : 'payment',
@@ -502,9 +592,13 @@ router.put('/sales/:id/payment', asyncRoute(async (req, res) => {
       current.paid_amount = paidAmount;
       current.credit_amount = nextCredit;
       await current.save({ session });
-      return current;
+      return { sale: current, debtAlert };
     });
-    res.json({ sale: serializeSale(sale), duplicate: false });
+    if (result.debtAlert) {
+      const { customerName: name, credit, balance } = result.debtAlert;
+      void notifyAdmin('creditDebt', 'Customer debt increased', `${name}'s debt increased by FCFA ${credit.toLocaleString()}. Current balance: FCFA ${balance.toLocaleString()}.`);
+    }
+    res.json({ sale: serializeSale(result.sale), duplicate: false });
   } catch (error) {
     if (error.code === 11000) {
       const duplicate = await SaleAdjustment.findOne({ idempotencyKey: key });
@@ -578,6 +672,7 @@ router.post('/expenses', asyncRoute(async (req, res) => {
     method,
     note: typeof note === 'string' ? note.trim() || null : null,
   });
+  void notifyAdmin('expenses', 'New expense recorded', `${expense.category}: FCFA ${expense.amount.toLocaleString()} (${expense.method})${expense.note ? `\n${expense.note}` : ''}.`);
   res.status(201).json({ expense: { ...expense.toObject(), id: String(expense._id) } });
 }));
 

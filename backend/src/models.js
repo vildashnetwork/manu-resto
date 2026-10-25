@@ -99,6 +99,16 @@ const expenseSchema = new Schema({
   created_at: { type: Number, default: Date.now, index: true },
 }, options);
 
+const settingSchema = new Schema({
+  _id: { type: String, default: 'main' },
+  adminEmail: { type: String, default: '', trim: true, lowercase: true },
+  notifications: {
+    lowStock: { type: Boolean, default: true },
+    creditDebt: { type: Boolean, default: true },
+    expenses: { type: Boolean, default: true },
+  },
+}, options);
+
 export const Product = mongoose.models.Product || mongoose.model('Product', productSchema);
 export const Customer = mongoose.models.Customer || mongoose.model('Customer', customerSchema);
 export const StockMovement = mongoose.models.StockMovement || mongoose.model('StockMovement', stockMovementSchema);
@@ -107,3 +117,4 @@ export const Payment = mongoose.models.Payment || mongoose.model('Payment', paym
 export const SaleAdjustment = mongoose.models.SaleAdjustment || mongoose.model('SaleAdjustment', saleAdjustmentSchema);
 export const Ledger = mongoose.models.Ledger || mongoose.model('Ledger', ledgerSchema);
 export const Expense = mongoose.models.Expense || mongoose.model('Expense', expenseSchema);
+export const Setting = mongoose.models.Setting || mongoose.model('Setting', settingSchema);

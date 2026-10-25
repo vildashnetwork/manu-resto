@@ -1,6 +1,6 @@
 # Manu's Resto Manager (MVP)
 
-Expo + React Native (JavaScript/JSX) + Expo Router. The app sends restaurant data to the Express API backed by MongoDB. The API base URL is centralized in `src/config/backend.ts`; by default it is `https://manu.onrender.com/api`.
+Expo + React Native (JavaScript/JSX) + Expo Router. The app sends restaurant data to the Express API backed by MongoDB. The API base URL is centralized in `src/config/backend.ts`; by default it is `https://manu-ltx7.onrender.com/api`.
 
 ## Run
 
@@ -10,13 +10,17 @@ npx expo install --fix   # aligns package versions with your installed Expo SDK
 npx expo start           # scan the QR code with Expo Go, or press "a" for Android
 ```
 
+The configured logo splash screen is native app configuration. Expo Go shows its own launch screen, and over-the-air JavaScript updates cannot change the native splash assets. To see the branded splash on Android, build and install a fresh native app after changing `app.json` (for example, `npx expo run:android` with Android Studio set up, or an EAS Android build).
+
 ## What is built (Phase 2 MVP)
 
 - **Home**: today's sales, collected, credit sales, debt recovered, expenses, outstanding debt, low-stock warning, recent sales.
-- **Sales**: searchable product grid, cart, mixed payments (Cash / MTN MoMo / Xcash / Orange Money / Bank transfer), partial payment with the rest on credit, remaining debt shown before confirming, credit-limit authorization.
+- **Sales**: searchable product grid, barcode scanning, adjustable checkout prices, mixed payments (Cash / MTN MoMo / Xcash / Orange Money / Bank transfer), partial payment with the rest on credit, credit-limit authorization, and branded printable/shareable receipts.
 - **Customers**: profiles, credit limit, opening debt (labelled as migrated), dated statement with running balance, repayments (never counted as sales).
-- **Stock**: products with price, cost, tracked stock, purchases, wastage, damage, complimentary, adjustments, low-stock threshold, and required Cloudinary images.
-- **Reports**: today / 7 days / this month; sales vs collected vs credit vs debt recovered vs expenses kept separate; payment-method breakdown; expected cash; best sellers; gross profit estimate; expenses; sales history with owner-only cancellation (reason required).
+- **Stock**: searchable and filterable products with editable details and barcodes, tracked stock, purchases, wastage, damage, complimentary, adjustments, low-stock threshold, and required Cloudinary images.
+- **Reports**: preset or custom date ranges; paid/unpaid filters; sales vs collected vs credit vs debt recovered vs expenses kept separate; payment-method breakdown; expected cash; best sellers; gross profit estimate; expenses; editable sale payment records and cancellation.
+
+The branded app icon uses `public/bglogo.png`; Android adaptive icons use `public/nobglogo.png` over the restaurant green. Receipts embed the transparent logo so it prints consistently on web and native platforms.
 
 ## API contract expected by the frontend
 
@@ -26,7 +30,7 @@ Set `EXPO_PUBLIC_API_URL` to the API root if it differs from the default (includ
 - `POST /stock/movements`
 - `GET /customers`, `GET /customers/:id`, `POST /customers`, `GET /customers/:id/statement`
 - `POST /payments/repayments`
-- `POST /sales`, `GET /sales?limit=&from=&to=`, `POST /sales/:id/cancel`
+- `POST /sales`, `GET /sales?limit=&from=&to=`, `POST /sales/:id/cancel`, `PUT /sales/:id/payment`
 - `POST /expenses`, `GET /reports?from=&to=`
 
 List responses may be a raw array or an object keyed by the resource name (or `data`). Single-record responses may be the record itself, under the resource name, or under `data`. Reports should provide the fields consumed by the Reports screen: totals/counts, `byMethod`, `topProducts`, and `expList`. Sale requests include `idempotencyKey`, `items`, `customerId`, `payments`, and `allowOverLimit`. Product requests include `imageUrl`.

@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Platform, Text, View } from 'react-native';
+import { AppState, Image, Platform, Text, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Btn } from '../src/components/ui';
+import { AppDrawer, DrawerContext, HeaderBrandTitle, MenuButton } from '../src/components/AppNavigation';
 import { colors } from '../src/theme';
 
 export default function RootLayout() {
   const [locked, setLocked] = useState(Platform.OS !== 'web');
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [lockMessage, setLockMessage] = useState('');
   const authenticating = useRef(false);
   const wasBackgrounded = useRef(false);
@@ -57,19 +59,44 @@ export default function RootLayout() {
   return (
     <>
       <StatusBar style="light" />
-      <Stack
-        screenOptions={{
-          headerStyle: { backgroundColor: colors.forest },
-          headerTintColor: '#fff',
-          headerTitleStyle: { fontWeight: '700' },
-          contentStyle: { backgroundColor: colors.cream },
-        }}
-      >
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="customer/[id]" options={{ title: 'Customer account' }} />
-      </Stack>
+      <DrawerContext.Provider value={() => setDrawerOpen(true)}>
+        <Stack
+          screenOptions={{
+            headerStyle: { backgroundColor: colors.forest },
+            headerTintColor: '#fff',
+            headerTitleStyle: { fontWeight: '700' },
+            contentStyle: { backgroundColor: colors.cream },
+          }}
+        >
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="customer/[id]"
+            options={{
+              headerTitle: () => <HeaderBrandTitle />,
+              headerTitleAlign: 'left',
+              headerLeft: () => <MenuButton onPress={() => setDrawerOpen(true)} />,
+            }}
+          />
+          <Stack.Screen
+            name="settings"
+            options={{
+              title: 'Settings',
+              headerTitle: () => <HeaderBrandTitle />,
+              headerTitleAlign: 'left',
+              headerLeft: () => <MenuButton onPress={() => setDrawerOpen(true)} />,
+            }}
+          />
+        </Stack>
+        <AppDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      </DrawerContext.Provider>
       {locked && Platform.OS !== 'web' && (
         <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.forest, justifyContent: 'center', padding: 28 }}>
+          <Image
+            source={require('../public/nobglogo.png')}
+            resizeMode="contain"
+            accessibilityLabel="Manu's Resto logo"
+            style={{ width: 220, height: 220, alignSelf: 'center', marginBottom: 18 }}
+          />
           <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', textAlign: 'center', marginBottom: 10 }}>Manu’s Resto Manager</Text>
           <Text style={{ color: '#e8eee9', fontSize: 16, textAlign: 'center', marginBottom: 20 }}>Authenticate with your device biometrics to continue.</Text>
           {lockMessage ? <Text style={{ color: '#ffe3b5', textAlign: 'center', marginBottom: 16 }}>{lockMessage}</Text> : null}

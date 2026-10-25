@@ -132,6 +132,14 @@ export async function getCustomers() {
   return collection(await get('/customers'), 'customers').map(normalizeCustomer);
 }
 
+export async function getSettings() {
+  return entity(await get('/settings'), 'settings');
+}
+
+export async function updateSettings(settings) {
+  return entity(await put('/settings', settings), 'settings');
+}
+
 export async function getCustomer(id) {
   return normalizeCustomer(entity(await get(`/customers/${encodeURIComponent(id)}`), 'customer'));
 }

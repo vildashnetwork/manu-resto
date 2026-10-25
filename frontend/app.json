@@ -5,12 +5,22 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "scheme": "manusresto",
+    "icon": "./public/bglogo.png",
     "userInterfaceStyle": "light",
     "backgroundColor": "#1E3A2B",
     "plugins": [
       "expo-router",
       "expo-sqlite",
       "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./public/nobglogo.png",
+          "imageWidth": 260,
+          "resizeMode": "contain",
+          "backgroundColor": "#0B3827"
+        }
+      ],
       [
         "expo-camera",
         {
@@ -29,10 +39,15 @@
           "photosPermission": "Allow Manu's Resto Manager to access photos so you can add product images."
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      "expo-asset"
     ],
     "android": {
-      "package": "com.manusresto.manager"
+      "package": "com.manusresto.manager",
+      "adaptiveIcon": {
+        "foregroundImage": "./public/nobglogo.png",
+        "backgroundColor": "#0B3827"
+      }
     },
     "ios": {
       "bundleIdentifier": "com.manusresto.manager"

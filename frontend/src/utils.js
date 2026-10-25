@@ -9,6 +9,9 @@ export const uid = () =>
 export const fcfa = (n = 0) =>
   `${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} FCFA`;
 
+export const num = (n = 0) =>
+  String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+
 export const parseAmount = (s) => parseInt(String(s ?? '').replace(/[^0-9]/g, ''), 10) || 0;
 
 export const startOfDay = (d = new Date()) => {

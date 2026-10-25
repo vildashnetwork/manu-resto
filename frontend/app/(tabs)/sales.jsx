@@ -1,5 +1,8 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { View, Text, Image, ScrollView, Pressable, Alert, StyleSheet, TextInput } from 'react-native';
+import { View, Text, Image, ScrollView, Pressable, Alert, StyleSheet, TextInput, Modal, Platform } from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { Card, Btn, Chip, Field, Sheet, Row, useLoad, screenStyle } from '../../src/components/ui';
 import { getProducts, getCustomers, createSale } from '../../src/api/repo';
 import { fcfa, parseAmount, uid } from '../../src/utils';
@@ -10,10 +13,16 @@ export default function Sales() {
   const [cat, setCat] = useState('All');
   const [q, setQ] = useState('');
   const [cart, setCart] = useState({}); // productId -> qty
+  const [priceOverrides, setPriceOverrides] = useState({});
   const [customer, setCustomer] = useState(null);
+  const [customerName, setCustomerName] = useState('');
   const [pay, setPay] = useState({});
   const [pickCustomer, setPickCustomer] = useState(false);
   const [custQ, setCustQ] = useState('');
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [receipt, setReceipt] = useState(null);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [busy, setBusy] = useState(false);
   const keyRef = useRef(uid()); // one idempotency key per checkout attempt
 
@@ -21,21 +30,26 @@ export default function Sales() {
   const customers = data?.customers ?? [];
   const categories = useMemo(() => ['All', ...Array.from(new Set(products.map((p) => p.category)))], [products]);
   const shown = products.filter(
-    (p) => (cat === 'All' || p.category === cat) && p.name.toLowerCase().includes(q.trim().toLowerCase())
+    (p) => (cat === 'All' || p.category === cat) && (p.name + ' ' + (p.barcode || '')).toLowerCase().includes(q.trim().toLowerCase())
   );
 
-  const lines = products.filter((p) => cart[p.id] > 0).map((p) => ({ ...p, qty: cart[p.id] }));
-  const total = lines.reduce((s, l) => s + l.price * l.qty, 0);
+  const lines = products.filter((p) => cart[p.id] > 0).map((p) => ({
+    ...p, qty: cart[p.id], salePrice: priceOverrides[p.id] ?? p.price,
+  }));
+  const total = lines.reduce((s, l) => s + l.salePrice * l.qty, 0);
   const paid = METHODS.reduce((s, m) => s + parseAmount(pay[m]), 0);
   const credit = total - paid;
   const overpaid = paid > total;
 
   const setQty = (id, delta) => setCart((c) => ({ ...c, [id]: Math.max(0, (c[id] || 0) + delta) }));
+  const setPrice = (id, value) => setPriceOverrides((current) => ({ ...current, [id]: parseAmount(value) }));
 
   function reset() {
     setCart({});
+    setPriceOverrides({});
     setPay({});
     setCustomer(null);
+    setCustomerName('');
     keyRef.current = uid();
   }
 
@@ -44,15 +58,16 @@ export default function Sales() {
     setBusy(true);
     try {
       const items = lines.map((l) => ({
-        productId: l.id, name: l.name, unitPrice: l.price, unitCost: l.cost, qty: l.qty, tracked: !!l.tracked,
+        productId: l.id, name: l.name, unitPrice: l.salePrice, unitCost: l.cost, qty: l.qty, tracked: !!l.tracked,
       }));
       const payments = METHODS.map((m) => ({ method: m, amount: parseAmount(pay[m]) })).filter((p) => p.amount > 0);
       const { sale } = await createSale({
-        idempotencyKey: keyRef.current, items, customerId: customer?.id, payments, allowOverLimit,
+        idempotencyKey: keyRef.current, items, customerId: customer?.id, customerName, payments, allowOverLimit,
       });
+      setReceipt(sale);
+      setCheckoutOpen(false);
       reset();
       reload();
-      Alert.alert('Sale recorded', `${sale.receipt_no}\nTotal: ${fcfa(sale.total)}\nPaid: ${fcfa(sale.paid_amount)}\nOn credit: ${fcfa(sale.credit_amount)}`);
     } catch (e) {
       if (e.code === 'CREDIT_LIMIT') {
         const { balance, limit, credit: c } = e.details;
@@ -69,18 +84,71 @@ export default function Sales() {
     }
   }
 
-  const canConfirm = lines.length > 0 && !overpaid && !(credit > 0 && !customer) && !busy;
+  async function openScanner() {
+    if (!cameraPermission?.granted) {
+      const result = await requestCameraPermission();
+      if (!result.granted) {
+        Alert.alert('Camera permission needed', 'Allow camera access to scan product barcodes.');
+        return;
+      }
+    }
+    setScannerOpen(true);
+  }
+
+  function onBarcodeScanned({ data: code }) {
+    if (!scannerOpen) return;
+    setScannerOpen(false);
+    const product = products.find((p) => p.barcode && p.barcode.trim().toLowerCase() === String(code).trim().toLowerCase());
+    if (!product) {
+      Alert.alert('Product not found', `No product is assigned to barcode ${code}. Add it in Stock and scan again.`);
+      return;
+    }
+    setQty(product.id, 1);
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[character]);
+  }
+
+  async function shareReceipt() {
+    if (!receipt) return;
+    const rows = (receipt.items || []).map((item) =>
+      `<tr><td>${escapeHtml(item.product_name)}</td><td>${item.qty}</td><td>${fcfa(item.unit_price)}</td><td>${fcfa(item.line_total)}</td></tr>`
+    ).join('');
+    const html = `<html><body style="font-family:Arial;padding:24px;color:#1b1f1d"><h1>Manu's Resto</h1><h2>Receipt ${escapeHtml(receipt.receipt_no)}</h2><p>${escapeHtml(receipt.customer_name || 'Walk-in customer')} · ${new Date(receipt.created_at || Date.now()).toLocaleString()}</p><table style="width:100%;border-collapse:collapse" border="1" cellpadding="8"><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr>${rows}</table><h3>Total: ${fcfa(receipt.total)}</h3><p>Paid: ${fcfa(receipt.paid_amount)} · Credit: ${fcfa(receipt.credit_amount)}</p></body></html>`;
+    try {
+      if (Platform.OS === 'web') {
+        await Print.printAsync({ html });
+        return;
+      }
+      const file = await Print.printToFileAsync({ html });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(file.uri, { mimeType: 'application/pdf', dialogTitle: `Receipt ${receipt.receipt_no}` });
+      } else {
+        Alert.alert('Receipt ready', `PDF saved to ${file.uri}`);
+      }
+    } catch (error) {
+      Alert.alert('Cannot create receipt', error.message || String(error));
+    }
+  }
+
+  const canConfirm = lines.length > 0 && !overpaid && !(credit > 0 && !customer) && lines.every((l) => l.salePrice > 0) && !busy;
 
   return (
     <View style={screenStyle}>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
-        <TextInput
-          placeholder="Search meals and drinks…"
-          placeholderTextColor="#A5A99F"
-          value={q}
-          onChangeText={setQ}
-          style={s.search}
-        />
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TextInput
+            placeholder="Search meals, drinks or barcode…"
+            placeholderTextColor="#A5A99F"
+            value={q}
+            onChangeText={setQ}
+            style={[s.search, { flex: 1 }]}
+          />
+          <Btn title="Scan barcode" variant="ghost" onPress={openScanner} style={{ minHeight: 46, paddingHorizontal: 10 }} />
+        </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 12 }}>
           {categories.map((c) => <Chip key={c} label={c} active={cat === c} onPress={() => setCat(c)} />)}
         </ScrollView>
@@ -101,70 +169,37 @@ export default function Sales() {
         </View>
 
         {lines.length > 0 && (
+          <>
           <Card style={{ marginTop: 16 }}>
             <Text style={s.h}>Cart</Text>
             {lines.map((l) => (
               <View key={l.id} style={s.cartRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontWeight: '500', color: colors.ink }}>{l.name}</Text>
-                  <Text style={{ color: colors.muted, fontSize: 12 }}>{fcfa(l.price)} × {l.qty}</Text>
+                  <Text style={{ color: colors.muted, fontSize: 12 }}>{fcfa(l.salePrice)} × {l.qty}</Text>
                 </View>
                 <Pressable onPress={() => setQty(l.id, -1)} style={s.qtyBtn}><Text style={s.qtyTxt}>−</Text></Pressable>
                 <Text style={{ width: 28, textAlign: 'center', fontWeight: '700' }}>{l.qty}</Text>
                 <Pressable onPress={() => setQty(l.id, 1)} style={s.qtyBtn}><Text style={s.qtyTxt}>+</Text></Pressable>
-                <Text style={{ width: 84, textAlign: 'right', fontWeight: '600' }}>{fcfa(l.price * l.qty)}</Text>
+                <TextInput
+                  value={String(l.salePrice)}
+                  onChangeText={(value) => setPrice(l.id, value)}
+                  keyboardType="number-pad"
+                  accessibilityLabel={`${l.name} final unit price`}
+                  style={[s.payInput, { width: 100, minHeight: 38, textAlign: 'right' }]}
+                />
               </View>
             ))}
           </Card>
+          <Text style={{ color: colors.muted, fontSize: 12, marginTop: 8 }}>Tap a final unit price to apply a discount or agreed price.</Text>
+          </>
         )}
 
         {lines.length > 0 && (
           <Card style={{ marginTop: 16 }}>
-            <Text style={s.h}>Customer (needed for credit)</Text>
-            <Pressable onPress={() => setPickCustomer(true)} style={s.pick}>
-              <Text style={{ color: customer ? colors.ink : colors.muted, fontSize: 16 }}>
-                {customer ? customer.name : 'Walk-in customer — tap to choose'}
-              </Text>
-            </Pressable>
-            {customer && (
-              <Text style={{ marginTop: 6, color: colors.muted }}>
-                Owes now: <Text style={{ fontWeight: '700', color: colors.ink }}>{fcfa(customer.balance)}</Text>
-                {customer.credit_limit > 0 ? `  ·  limit ${fcfa(customer.credit_limit)}` : ''}
-              </Text>
-            )}
-
-            <Text style={[s.h, { marginTop: 16 }]}>Payment received now</Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
-              <Btn title="Full cash" variant="ghost" style={{ flex: 1, minHeight: 40 }} onPress={() => setPay({ Cash: String(total) })} />
-              <Btn title="All on credit" variant="ghost" style={{ flex: 1, minHeight: 40 }} onPress={() => setPay({})} />
-            </View>
-            {METHODS.map((m) => (
-              <View key={m} style={s.payRow}>
-                <Text style={{ flex: 1, color: colors.ink }}>{m}</Text>
-                <TextInput
-                  value={pay[m] ?? ''}
-                  onChangeText={(t) => setPay((p) => ({ ...p, [m]: t.replace(/[^0-9]/g, '') }))}
-                  keyboardType="number-pad"
-                  placeholder="0"
-                  placeholderTextColor="#A5A99F"
-                  style={[s.payInput]}
-                />
-              </View>
-            ))}
-
-            <View style={s.summary}>
-              <Text style={{ color: colors.muted }}>Total {fcfa(total)}  ·  Paid {fcfa(paid)}</Text>
-              {overpaid ? (
-                <Text style={{ color: colors.danger, fontWeight: '700' }}>Payments exceed total by {fcfa(paid - total)}</Text>
-              ) : credit > 0 ? (
-                <Text style={{ color: colors.warn, fontWeight: '700' }}>
-                  On credit: {fcfa(credit)}
-                  {customer ? `  →  new debt ${fcfa(customer.balance + credit)}` : '  (choose a customer)'}
-                </Text>
-              ) : (
-                <Text style={{ color: colors.ok, fontWeight: '700' }}>Fully paid</Text>
-              )}
-            </View>
+            <Text style={s.h}>Cart total</Text>
+            <Text style={{ color: colors.forest, fontSize: 20, fontWeight: '800' }}>{fcfa(total)}</Text>
+            <Btn title="Checkout" onPress={() => setCheckoutOpen(true)} style={{ marginTop: 10 }} />
           </Card>
         )}
       </ScrollView>
@@ -174,12 +209,68 @@ export default function Sales() {
           <Text style={{ color: colors.muted, fontSize: 12 }}>Total</Text>
           <Text style={{ fontSize: 20, fontWeight: '800', color: colors.ink }}>{fcfa(total)}</Text>
         </View>
-        <Btn title={busy ? 'Saving…' : 'Confirm sale'} onPress={() => submit(false)} disabled={!canConfirm} style={{ minWidth: 160 }} />
+        <Btn title="Checkout" onPress={() => setCheckoutOpen(true)} disabled={!lines.length} style={{ minWidth: 160 }} />
       </View>
+
+      <Sheet visible={checkoutOpen} title="Complete sale" onClose={() => setCheckoutOpen(false)}>
+        <Text style={s.h}>Order items</Text>
+        {lines.map((line) => (
+          <View key={line.id} style={[s.cartRow, { borderBottomWidth: 1, borderBottomColor: colors.line }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colors.ink, fontWeight: '600' }}>{line.name}</Text>
+              <Text style={{ color: colors.muted, fontSize: 12 }}>{fcfa(line.salePrice)} each</Text>
+            </View>
+            <Pressable onPress={() => setQty(line.id, -1)} style={s.qtyBtn}><Text style={s.qtyTxt}>−</Text></Pressable>
+            <Text style={{ width: 28, textAlign: 'center', fontWeight: '700' }}>{line.qty}</Text>
+            <Pressable onPress={() => setQty(line.id, 1)} style={s.qtyBtn}><Text style={s.qtyTxt}>+</Text></Pressable>
+            <TextInput value={String(line.salePrice)} onChangeText={(value) => setPrice(line.id, value)}
+              keyboardType="number-pad" accessibilityLabel={`${line.name} final unit price`}
+              style={[s.payInput, { width: 92, minHeight: 38, textAlign: 'right' }]} />
+          </View>
+        ))}
+        <Text style={{ color: colors.forest, fontWeight: '800', fontSize: 17, marginTop: 10, marginBottom: 12 }}>Total {fcfa(total)}</Text>
+        <Text style={s.h}>Customer</Text>
+        <Pressable onPress={() => setPickCustomer(true)} style={s.pick}>
+          <Text style={{ color: customer ? colors.ink : colors.muted, fontSize: 16 }}>
+            {customer ? customer.name : 'Select account customer (required for credit)'}
+          </Text>
+        </Pressable>
+        {customer ? (
+          <Text style={{ marginTop: 6, color: colors.muted }}>
+            Owes now: <Text style={{ fontWeight: '700', color: colors.ink }}>{fcfa(customer.balance)}</Text>
+            {customer.credit_limit > 0 ? ` · limit ${fcfa(customer.credit_limit)}` : ''}
+          </Text>
+        ) : (
+          <Field label="Customer name (optional for paid sale)" value={customerName} onChangeText={setCustomerName} />
+        )}
+        <Text style={[s.h, { marginTop: 16 }]}>Payment received now</Text>
+        <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+          <Btn title="Full cash" variant="ghost" style={{ flex: 1, minHeight: 40 }} onPress={() => setPay({ Cash: String(total) })} />
+          <Btn title="All on credit" variant="ghost" style={{ flex: 1, minHeight: 40 }} onPress={() => setPay({})} />
+        </View>
+        {METHODS.map((m) => (
+          <View key={m} style={s.payRow}>
+            <Text style={{ flex: 1, color: colors.ink }}>{m}</Text>
+            <TextInput value={pay[m] ?? ''} onChangeText={(t) => setPay((p) => ({ ...p, [m]: t.replace(/[^0-9]/g, '') }))}
+              keyboardType="number-pad" placeholder="0" placeholderTextColor="#A5A99F" style={s.payInput} />
+          </View>
+        ))}
+        <View style={s.summary}>
+          <Text style={{ color: colors.muted }}>Total {fcfa(total)} · Paid {fcfa(paid)}</Text>
+          {overpaid ? (
+            <Text style={{ color: colors.danger, fontWeight: '700' }}>Payments exceed total by {fcfa(paid - total)}</Text>
+          ) : credit > 0 ? (
+            <Text style={{ color: colors.warn, fontWeight: '700' }}>
+              On credit: {fcfa(credit)}{customer ? ` → new debt ${fcfa(customer.balance + credit)}` : ' · select a customer account'}
+            </Text>
+          ) : <Text style={{ color: colors.ok, fontWeight: '700' }}>Fully paid</Text>}
+        </View>
+        <Btn title={busy ? 'Saving…' : 'Record sale'} onPress={() => submit(false)} disabled={!canConfirm} style={{ marginTop: 16 }} />
+      </Sheet>
 
       <Sheet visible={pickCustomer} title="Choose customer" onClose={() => setPickCustomer(false)}>
         <Field placeholder="Search name or phone" value={custQ} onChangeText={setCustQ} />
-        <Btn variant="ghost" title="Walk-in (no account)" onPress={() => { setCustomer(null); setPickCustomer(false); }} style={{ marginBottom: 8 }} />
+        <Btn variant="ghost" title="Walk-in customer" onPress={() => { setCustomer(null); setCustomerName(''); setPickCustomer(false); }} style={{ marginBottom: 8 }} />
         {customers
           .filter((c) => (c.name + (c.phone || '')).toLowerCase().includes(custQ.trim().toLowerCase()))
           .map((c) => (
@@ -189,11 +280,33 @@ export default function Sales() {
               sub={c.phone || undefined}
               right={fcfa(c.balance)}
               rightColor={c.balance > 0 ? colors.danger : colors.muted}
-              onPress={() => { setCustomer(c); setPickCustomer(false); }}
+              onPress={() => { setCustomer(c); setCustomerName(c.name); setPickCustomer(false); }}
             />
           ))}
         {customers.length === 0 && <Text style={{ color: colors.muted }}>No customers yet. Add them in the Customers tab.</Text>}
       </Sheet>
+
+      <Sheet visible={!!receipt} title={`Sale recorded · ${receipt?.receipt_no || ''}`} onClose={() => setReceipt(null)}>
+        <Text style={{ color: colors.ink, marginBottom: 6 }}>Customer: {receipt?.customer_name || 'Walk-in customer'}</Text>
+        <Text style={{ color: colors.ink, marginBottom: 6 }}>Total: {fcfa(receipt?.total)}</Text>
+        <Text style={{ color: colors.ink, marginBottom: 14 }}>Paid: {fcfa(receipt?.paid_amount)} · Credit: {fcfa(receipt?.credit_amount)}</Text>
+        <Btn title="Download / share receipt" onPress={shareReceipt} />
+      </Sheet>
+
+      <Modal visible={scannerOpen} animationType="slide" onRequestClose={() => setScannerOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: '#000' }}>
+          <CameraView
+            style={{ flex: 1 }}
+            facing="back"
+            onBarcodeScanned={onBarcodeScanned}
+            barcodeScannerSettings={{ barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'code128', 'code39', 'itf14', 'qr'] }}
+          />
+          <View style={{ position: 'absolute', top: 54, left: 20, right: 20 }}>
+            <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', textAlign: 'center' }}>Scan a product barcode</Text>
+            <Btn title="Close scanner" variant="ghost" onPress={() => setScannerOpen(false)} style={{ marginTop: 18, backgroundColor: '#fff' }} />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

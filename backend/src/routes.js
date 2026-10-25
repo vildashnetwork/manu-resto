@@ -12,7 +12,7 @@ import {
 } from './models.js';
 
 const router = Router();
-const METHODS = ['Cash', 'MTN MoMo', 'Orange Money', 'Bank transfer'];
+const METHODS = ['Cash', 'MTN MoMo', 'Xcash', 'Orange Money', 'Bank transfer'];
 const now = () => Date.now();
 
 function httpError(status, message, code, details) {

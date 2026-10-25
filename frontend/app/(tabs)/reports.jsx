@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ScrollView, View, Text, Alert } from 'react-native';
 import { Card, Btn, Chip, Field, Sheet, Row, Section, Stat, useLoad, screenStyle, pad } from '../../src/components/ui';
-import { getReport, getRecentSales, addExpense, cancelSale } from '../../src/api/repo';
+import { getReport, getRecentSales, addExpense, cancelSale, updateSalePayment } from '../../src/api/repo';
 import { fcfa, parseAmount, startOfDay, startOfMonth, fmtDateTime } from '../../src/utils';
 import { colors, METHODS, EXPENSE_CATEGORIES } from '../../src/theme';
 
@@ -12,13 +12,28 @@ const PERIODS = {
   'This month': () => [startOfMonth(), Date.now()],
 };
 
+const dateInput = (time) => {
+  const date = new Date(time);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+};
+const rangeFromInput = (value, end = false) => {
+  const date = new Date(`${value}T${end ? '23:59:59.999' : '00:00:00'}`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(date.getTime()) || dateInput(date.getTime()) !== value) {
+    throw new Error('Enter a valid date in YYYY-MM-DD format.');
+  }
+  return date.getTime();
+};
+
 export default function Reports() {
   const [period, setPeriod] = useState('Today');
+  const [fromDate, setFromDate] = useState(dateInput(startOfDay()));
+  const [toDate, setToDate] = useState(dateInput(Date.now()));
   const [d, reload] = useLoad(async () => {
-    const [from, to] = PERIODS[period]();
-    const [report, sales] = await Promise.all([getReport(from, to), getRecentSales(30, from, to)]);
+    const from = rangeFromInput(fromDate);
+    const to = rangeFromInput(toDate, true);
+    const [report, sales] = await Promise.all([getReport(from, to), getRecentSales(100, from, to)]);
     return { report, sales };
-  }, [period]);
+  }, [fromDate, toDate]);
 
   const [expOpen, setExpOpen] = useState(false);
   const [expCat, setExpCat] = useState('Supplies');
@@ -27,6 +42,10 @@ export default function Reports() {
   const [expNote, setExpNote] = useState('');
   const [cancelId, setCancelId] = useState(null);
   const [reason, setReason] = useState('');
+  const [paymentFilter, setPaymentFilter] = useState('All');
+  const [editingSale, setEditingSale] = useState(null);
+  const [paidInput, setPaidInput] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [busy, setBusy] = useState(false);
 
   async function saveExpense() {
@@ -47,14 +66,49 @@ export default function Reports() {
     } catch (e) { Alert.alert('Cannot cancel sale', e.message); } finally { setBusy(false); }
   }
 
+  async function saveSalePayment() {
+    if (!editingSale || busy) return;
+    const paidAmount = parseAmount(paidInput);
+    if (paidAmount > editingSale.total) {
+      Alert.alert('Invalid amount', 'The paid amount cannot be greater than the sale total.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await updateSalePayment(editingSale.id, { paidAmount, method: paymentMethod, idempotencyKey: `report-edit-${editingSale.id}-${Date.now()}` });
+      setEditingSale(null);
+      reload();
+    } catch (e) {
+      Alert.alert('Cannot update sale payment', e.message);
+    } finally { setBusy(false); }
+  }
+
+  function choosePeriod(name) {
+    setPeriod(name);
+    const [from, to] = PERIODS[name]();
+    setFromDate(dateInput(from));
+    setToDate(dateInput(to));
+  }
+
   if (!d) return <View style={screenStyle} />;
   const r = d.report;
+  const visibleSales = d.sales.filter((s) =>
+    paymentFilter === 'All' ||
+    (s.status === 'completed' && (paymentFilter === 'Paid' ? s.credit_amount === 0 : s.credit_amount > 0))
+  );
 
   return (
     <ScrollView style={screenStyle} contentContainerStyle={pad} keyboardShouldPersistTaps="handled">
       <View style={{ flexDirection: 'row', marginBottom: 12 }}>
-        {Object.keys(PERIODS).map((p) => <Chip key={p} label={p} active={period === p} onPress={() => setPeriod(p)} />)}
+        {Object.keys(PERIODS).map((p) => <Chip key={p} label={p} active={period === p} onPress={() => choosePeriod(p)} />)}
       </View>
+      <Card style={{ marginBottom: 12 }}>
+        <Text style={{ color: colors.muted, fontSize: 13, marginBottom: 8 }}>Custom date range (YYYY-MM-DD)</Text>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Field label="From" value={fromDate} onChangeText={(value) => { setPeriod('Custom'); setFromDate(value); }} style={{ flex: 1 }} />
+          <Field label="To" value={toDate} onChangeText={(value) => { setPeriod('Custom'); setToDate(value); }} style={{ flex: 1 }} />
+        </View>
+      </Card>
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
         <Stat label={`Total sales (${r.salesCount})`} value={fcfa(r.totalSales)} />
@@ -97,24 +151,49 @@ export default function Reports() {
       </Section>
 
       <Section title="Sales history">
+        <View style={{ flexDirection: 'row', marginBottom: 8 }}>
+          {['All', 'Paid', 'Unpaid'].map((value) =>
+            <Chip key={value} label={value} active={paymentFilter === value} onPress={() => setPaymentFilter(value)} />
+          )}
+        </View>
         <Card>
-          {d.sales.length === 0 && <Text style={{ color: colors.muted }}>No sales in this period.</Text>}
-          {d.sales.map((s) => (
+          {visibleSales.length === 0 && <Text style={{ color: colors.muted }}>No sales match these filters.</Text>}
+          {visibleSales.map((s) => (
             <View key={s.id}>
               <Row
                 left={`${s.receipt_no}${s.status === 'cancelled' ? ' (cancelled)' : ''}`}
                 sub={`${fmtDateTime(s.created_at)}${s.customer_name ? ' · ' + s.customer_name : ''}${s.cancel_reason ? ' · ' + s.cancel_reason : ''}`}
                 right={fcfa(s.total)}
                 rightColor={s.status === 'cancelled' ? colors.muted : undefined}
-                subRight={s.credit_amount > 0 ? `Credit ${fcfa(s.credit_amount)}` : 'Paid'}
+                subRight={s.credit_amount > 0 ? `Unpaid ${fcfa(s.credit_amount)} · paid ${fcfa(s.paid_amount)}` : 'Paid'}
               />
               {s.status === 'completed' && (
-                <Btn title="Cancel sale" variant="ghost" onPress={() => setCancelId(s.id)} style={{ minHeight: 34, marginVertical: 6, alignSelf: 'flex-start' }} />
+                <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                  <Btn title="Edit amount paid" variant="ghost" onPress={() => { setEditingSale(s); setPaidInput(String(s.paid_amount || 0)); setPaymentMethod('Cash'); }} style={{ minHeight: 34, marginVertical: 6, alignSelf: 'flex-start' }} />
+                  <Btn title="Cancel sale" variant="ghost" onPress={() => setCancelId(s.id)} style={{ minHeight: 34, marginVertical: 6, alignSelf: 'flex-start' }} />
+                </View>
               )}
             </View>
           ))}
         </Card>
       </Section>
+
+      <Sheet visible={!!editingSale} title="Edit sale payment" onClose={() => setEditingSale(null)}>
+        <Text style={{ color: colors.muted, marginBottom: 10 }}>
+          {editingSale?.receipt_no} · Sale total {fcfa(editingSale?.total)}
+        </Text>
+        <Field label="Amount paid (FCFA)" keyboardType="number-pad" value={paidInput} onChangeText={setPaidInput} />
+        {parseAmount(paidInput) < (editingSale?.total || 0) &&
+          <Text style={{ color: colors.warn, marginBottom: 10 }}>Remaining credit: {fcfa((editingSale?.total || 0) - parseAmount(paidInput))}</Text>}
+        <Text style={{ fontSize: 13, color: colors.muted, marginBottom: 6 }}>Payment method for the adjusted paid amount</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12, rowGap: 8 }}>
+          {METHODS.map((m) => <Chip key={m} label={m} active={paymentMethod === m} onPress={() => setPaymentMethod(m)} />)}
+        </View>
+        <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 12 }}>
+          This keeps an audit trail by reversing the previous payment entries and recording the corrected amount.
+        </Text>
+        <Btn title={busy ? 'Saving…' : 'Save payment adjustment'} onPress={saveSalePayment} disabled={busy || parseAmount(paidInput) > (editingSale?.total || 0)} />
+      </Sheet>
 
       <Sheet visible={expOpen} title="New expense" onClose={() => setExpOpen(false)}>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12, rowGap: 8 }}>

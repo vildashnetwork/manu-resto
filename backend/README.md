@@ -23,7 +23,7 @@ npm run seed:drinks -- --dry-run
 npm run seed:drinks -- --yes
 ```
 
-It skips exact product-name matches already returned by `GET /products`, uploads each new product through `POST /products`, and stops on API read errors. Set `API_BASE_URL` to use another API deployment. The current API does not store manufacturer barcodes, so this sample does not make package barcode scanning available.
+It skips exact product-name matches already returned by `GET /products`, uploads each new product through `POST /products`, and stops on API read errors. Set `API_BASE_URL` to use another API deployment. Barcode scanning works for products with a barcode entered in the Stock editor. The mock catalog does not guess manufacturer barcodes.
 
 ## Seed mock meals
 
@@ -39,15 +39,17 @@ The uploader uses `API_BASE_URL` or defaults to `https://manu-ltx7.onrender.com/
 ## Endpoints
 
 - `GET /api/health`
-- `GET|POST /api/products`, `PUT /api/products/:id`
+- `GET|POST /api/products`, `PUT /api/products/:id` (including optional `barcode`)
 - `POST /api/stock/movements`
 - `GET|POST /api/customers`, `GET /api/customers/:id`, `GET /api/customers/:id/statement`
 - `POST /api/payments/repayments`
-- `POST|GET /api/sales`, `POST /api/sales/:id/cancel`
+- `POST|GET /api/sales`, `POST /api/sales/:id/cancel`, `PUT /api/sales/:id/payment`
 - `POST /api/expenses`
 - `GET /api/reports`
 
 Sale and repayment writes use MongoDB transactions. Use a MongoDB replica set or Atlas deployment that supports transactions. Product images are uploaded by the frontend to Cloudinary; this API stores the secure image URL, not the image file.
+
+Sales accept an optional per-line `unitPrice` and a `customerName` for named walk-in receipts. Payment adjustments reverse the prior sale-payment entries and record the corrected payment in a transaction, updating the customer ledger and balance when credit changes. Deploy backend changes before using barcode fields, discounted sale prices, or payment adjustments with the hosted API.
 
 ## Deployment
 

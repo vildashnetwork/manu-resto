@@ -13,7 +13,7 @@ npx expo start           # scan the QR code with Expo Go, or press "a" for Andro
 ## What is built (Phase 2 MVP)
 
 - **Home**: today's sales, collected, credit sales, debt recovered, expenses, outstanding debt, low-stock warning, recent sales.
-- **Sales**: searchable product grid, cart, mixed payments (Cash / MTN MoMo / Orange Money / Bank transfer), partial payment with the rest on credit, remaining debt shown before confirming, credit-limit authorization.
+- **Sales**: searchable product grid, cart, mixed payments (Cash / MTN MoMo / Xcash / Orange Money / Bank transfer), partial payment with the rest on credit, remaining debt shown before confirming, credit-limit authorization.
 - **Customers**: profiles, credit limit, opening debt (labelled as migrated), dated statement with running balance, repayments (never counted as sales).
 - **Stock**: products with price, cost, tracked stock, purchases, wastage, damage, complimentary, adjustments, low-stock threshold, and required Cloudinary images.
 - **Reports**: today / 7 days / this month; sales vs collected vs credit vs debt recovered vs expenses kept separate; payment-method breakdown; expected cash; best sellers; gross profit estimate; expenses; sales history with owner-only cancellation (reason required).

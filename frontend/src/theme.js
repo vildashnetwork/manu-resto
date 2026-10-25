@@ -14,5 +14,5 @@ export const colors = {
 
 export const radius = { sm: 8, md: 12, lg: 16 };
 
-export const METHODS = ['Cash', 'MTN MoMo', 'Orange Money', 'Bank transfer'];
+export const METHODS = ['Cash', 'MTN MoMo', 'Xcash', 'Orange Money', 'Bank transfer'];
 export const EXPENSE_CATEGORIES = ['Supplies', 'Transport', 'Rent', 'Utilities', 'Salaries', 'Other'];

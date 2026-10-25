@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import {
-  View, Text, TextInput, Pressable, Modal, ScrollView, StyleSheet, KeyboardAvoidingView, Platform,
+  View, Text, TextInput, Pressable, Modal, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, Alert,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { colors, radius } from '../theme';
@@ -13,6 +13,7 @@ export function useLoad(loader, deps = []) {
       setData(await loader());
     } catch (e) {
       console.warn('load failed', e);
+      Alert.alert('Could not load data', e.message || String(e));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);

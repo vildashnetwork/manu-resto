@@ -10,7 +10,13 @@
     "plugins": [
       "expo-router",
       "expo-sqlite",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Manu's Resto Manager to access photos so you can add product images."
+        }
+      ]
     ],
     "android": {
       "package": "com.manusresto.manager"

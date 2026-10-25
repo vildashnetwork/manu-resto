@@ -31,7 +31,7 @@ Set `EXPO_PUBLIC_API_URL` to the API root if it differs from the default (includ
 
 List responses may be a raw array or an object keyed by the resource name (or `data`). Single-record responses may be the record itself, under the resource name, or under `data`. Reports should provide the fields consumed by the Reports screen: totals/counts, `byMethod`, `topProducts`, and `expList`. Sale requests include `idempotencyKey`, `items`, `customerId`, `payments`, and `allowOverLimit`. Product requests include `imageUrl`.
 
-The backend source is not included in this workspace, so route names and response shapes above are the frontend contract and must match the Express app. The app does not connect to MongoDB directly; database credentials stay on the server.
+The matching Express/MongoDB backend now lives in `../backend`; see its README for startup, MongoDB transaction requirements, and deployment configuration. The app does not connect to MongoDB directly; database credentials stay on the server.
 
 ## Product images
 

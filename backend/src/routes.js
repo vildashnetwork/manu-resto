@@ -118,7 +118,7 @@ router.post('/products', asyncRoute(async (req, res) => {
       tracked: Boolean(tracked),
       stock: Boolean(tracked) ? initialStock : 0,
       imageUrl,
-    }], { session });
+    }], { session, ordered: true });
 
     if (created.tracked && initialStock > 0) {
       await StockMovement.create([{
@@ -126,7 +126,7 @@ router.post('/products', asyncRoute(async (req, res) => {
         type: 'opening',
         qty: initialStock,
         note: 'Opening stock',
-      }], { session });
+      }], { session, ordered: true });
     }
     return created;
   });
@@ -199,7 +199,7 @@ router.post('/stock/movements', asyncRoute(async (req, res) => {
       type,
       qty,
       note: typeof note === 'string' ? note.trim() || null : null,
-    }], { session });
+    }], { session, ordered: true });
     return updated;
   });
   res.status(201).json({ product: serializeProduct(product) });
@@ -226,7 +226,7 @@ router.post('/customers', asyncRoute(async (req, res) => {
       creditLimit: limit,
       balance: debt,
       notes: typeof notes === 'string' ? notes.trim() || null : null,
-    }], { session });
+    }], { session, ordered: true });
     if (debt > 0) {
       await Ledger.create([{
         customerId: created._id,
@@ -234,7 +234,7 @@ router.post('/customers', asyncRoute(async (req, res) => {
         amount: debt,
         ref_type: 'migration',
         note: 'Opening balance (migrated from paper book)',
-      }], { session });
+      }], { session, ordered: true });
     }
     return created;
   });
@@ -284,7 +284,7 @@ router.post('/payments/repayments', asyncRoute(async (req, res) => {
         amount,
         reference: typeof reference === 'string' ? reference.trim() || null : null,
         idempotencyKey: idempotencyKey.trim(),
-      }], { session });
+      }], { session, ordered: true });
       await Customer.updateOne({ _id: customerId }, { $inc: { balance: -amount } }, { session });
       await Ledger.create([{
         customerId,
@@ -293,7 +293,7 @@ router.post('/payments/repayments', asyncRoute(async (req, res) => {
         ref_type: 'payment',
         ref_id: String(payment._id),
         note: `Repayment (${method})`,
-      }], { session });
+      }], { session, ordered: true });
       return payment;
     });
     res.status(201).json({ duplicate: false, paymentId: String(result._id) });
@@ -391,7 +391,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
         paid_amount: paid,
         credit_amount: credit,
         idempotencyKey: idempotencyKey.trim(),
-      }], { session });
+      }], { session, ordered: true });
 
       if (preparedPayments.length > 0) {
         await Payment.create(preparedPayments.map((payment, index) => ({
@@ -400,7 +400,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
           customerId: customer?._id ?? null,
           ...payment,
           idempotencyKey: `${idempotencyKey.trim()}:${index}`,
-        })), { session });
+        })), { session, ordered: true });
       }
       if (credit > 0) {
         await Customer.updateOne({ _id: customer._id }, { $inc: { balance: credit } }, { session });
@@ -411,7 +411,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
           ref_type: 'sale',
           ref_id: String(created._id),
           note: `Credit sale ${receiptNo}`,
-        }], { session });
+        }], { session, ordered: true });
       }
       const movements = saleItems
         .filter((item) => productById.get(String(item.productId)).tracked)
@@ -421,7 +421,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
           qty: -item.qty,
           refId: String(created._id),
         }));
-      if (movements.length) await StockMovement.create(movements, { session });
+      if (movements.length) await StockMovement.create(movements, { session, ordered: true });
       return created;
     });
     res.status(201).json({ sale: serializeSale(sale), duplicate: false });
@@ -478,7 +478,7 @@ router.put('/sales/:id/payment', asyncRoute(async (req, res) => {
           ref_type: 'sale_adjustment',
           ref_id: String(current._id),
           note: `Payment adjusted for sale ${current.receipt_no}`,
-        }], { session });
+        }], { session, ordered: true });
       }
 
       await Payment.updateMany({ saleId: current._id, kind: 'sale', status: 'ok' }, { $set: { status: 'reversed' } }, { session });
@@ -491,14 +491,14 @@ router.put('/sales/:id/payment', asyncRoute(async (req, res) => {
           amount: paidAmount,
           reference: 'Sale payment adjustment',
           idempotencyKey: `${key}:payment`,
-        }], { session });
+        }], { session, ordered: true });
       }
       await SaleAdjustment.create([{
         saleId: current._id,
         idempotencyKey: key,
         paidAmount,
         method: paidAmount > 0 ? method : null,
-      }], { session });
+      }], { session, ordered: true });
       current.paid_amount = paidAmount;
       current.credit_amount = nextCredit;
       await current.save({ session });
@@ -544,7 +544,7 @@ router.post('/sales/:id/cancel', asyncRoute(async (req, res) => {
         qty: item.qty,
         note: reason.trim(),
         refId: String(current._id),
-      }], { session });
+      }], { session, ordered: true });
     }
 
     if (current.customerId && current.credit_amount > 0) {
@@ -556,7 +556,7 @@ router.post('/sales/:id/cancel', asyncRoute(async (req, res) => {
         ref_type: 'sale',
         ref_id: String(current._id),
         note: `Cancelled sale ${current.receipt_no}: ${reason.trim()}`,
-      }], { session });
+      }], { session, ordered: true });
     }
     await Payment.updateMany({ saleId: current._id, status: 'ok' }, { $set: { status: 'reversed' } }, { session });
     current.status = 'cancelled';

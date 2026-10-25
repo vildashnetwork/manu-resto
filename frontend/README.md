@@ -1,3 +1,9 @@
+npm install -g eas-cli
+eas --version
+eas login
+
+eas build --platform android --profile preview
+
 # Manu's Resto Manager (MVP)
 
 Expo + React Native (JavaScript/JSX) + Expo Router. The app sends restaurant data to the Express API backed by MongoDB. The API base URL is centralized in `src/config/backend.ts`; by default it is `https://manu-ltx7.onrender.com/api`.

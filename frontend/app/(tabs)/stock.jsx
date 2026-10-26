@@ -131,14 +131,20 @@ export default function Stock() {
       }
     }
     setBarcodeScanAction(action);
-    if (Platform.OS === 'android') {
+
+    const useModernScanner =
+      Platform.OS === 'android' && CameraView.isModernBarcodeScannerAvailable;
+
+    if (useModernScanner) {
       try {
         await scanWithGooglePlayServices((result) => onBarcodeScanned(result, action));
+        return;
       } catch (error) {
-        Alert.alert('Cannot scan barcode', error.message || String(error));
+        // Google Play Services scanner unavailable at runtime; fall back to the
+        // inline camera scanner, which works without Google Play Services.
       }
-      return;
     }
+
     setBarcodeScannerOpen(true);
   }
 

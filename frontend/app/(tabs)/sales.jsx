@@ -6,7 +6,6 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import { scanWithGooglePlayServices } from '../../src/api/barcodeScanner';
 import {
   Hero, Card, Btn, Chip, Field, SearchBox, Sheet, Row, Avatar, IconDot, Money, Pill, Empty, useLoad, ScreenShimmer, screenStyle,
 } from '../../src/components/ui';
@@ -136,19 +135,6 @@ export default function Sales() {
         return;
       }
     }
-    const useModernScanner =
-      Platform.OS === 'android' && CameraView.isModernBarcodeScannerAvailable;
-
-    if (useModernScanner) {
-      try {
-        await scanWithGooglePlayServices(onBarcodeScanned);
-        return;
-      } catch (error) {
-        // Google Play Services scanner unavailable at runtime; fall back to the
-        // inline camera scanner, which works without Google Play Services.
-      }
-    }
-
     setScannerOpen(true);
   }
 

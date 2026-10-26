@@ -1,8 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { ScrollView, View, Text, Image, Alert, Pressable, StyleSheet, Modal, Platform } from 'react-native';
+import { ScrollView, View, Text, Image, Alert, Pressable, StyleSheet, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { scanWithGooglePlayServices } from '../../src/api/barcodeScanner';
 import {
   Hero, Card, Btn, Chip, Field, SearchBox, Sheet, IconDot, Pill, Empty, Fab, useLoad, ScreenShimmer, screenStyle, body,
 } from '../../src/components/ui';
@@ -131,20 +130,6 @@ export default function Stock() {
       }
     }
     setBarcodeScanAction(action);
-
-    const useModernScanner =
-      Platform.OS === 'android' && CameraView.isModernBarcodeScannerAvailable;
-
-    if (useModernScanner) {
-      try {
-        await scanWithGooglePlayServices((result) => onBarcodeScanned(result, action));
-        return;
-      } catch (error) {
-        // Google Play Services scanner unavailable at runtime; fall back to the
-        // inline camera scanner, which works without Google Play Services.
-      }
-    }
-
     setBarcodeScannerOpen(true);
   }
 

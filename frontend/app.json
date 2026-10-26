@@ -27,6 +27,7 @@
           "cameraPermission": "Allow Manu's Resto Manager to scan product barcodes."
         }
       ],
+      "react-native-vision-camera",
       "./plugins/withGooglePlayStoreQuery",
       [
         "expo-local-authentication",

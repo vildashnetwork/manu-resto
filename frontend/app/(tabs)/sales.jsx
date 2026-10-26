@@ -2,7 +2,8 @@ import React, { useMemo, useRef, useState } from 'react';
 import { View, Text, Image, ScrollView, Pressable, Alert, StyleSheet, TextInput, Modal, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Asset } from 'expo-asset';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useCameraPermissions } from 'expo-camera';
+import BarcodeScanner from '../../src/components/BarcodeScanner';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
@@ -644,34 +645,11 @@ export default function Sales() {
         )}
       </Sheet>
 
-      <Modal visible={scannerOpen} animationType="slide" onRequestClose={() => setScannerOpen(false)}>
-        <View style={{ flex: 1, backgroundColor: '#000' }}>
-          <CameraView
-            style={StyleSheet.absoluteFill}
-            facing="back"
-            autofocus="on"
-            onBarcodeScanned={onBarcodeScanned}
-            barcodeScannerSettings={{ barcodeTypes: ['aztec', 'ean13', 'ean8', 'qr', 'pdf417', 'upc_e', 'datamatrix', 'code39', 'code93', 'itf14', 'codabar', 'code128', 'upc_a'] }}
-            onMountError={(event) => Alert.alert('Camera unavailable', event.message)}
-          />
-          <View style={s.scanOverlay} pointerEvents="box-none">
-            <View style={s.scanHeader}>
-              <Text style={s.scanTitle}>Scan a product barcode</Text>
-              <Text style={s.scanSub}>Hold the code inside the frame</Text>
-            </View>
-            <View style={s.scanFrame}>
-              <View style={[s.corner, { top: 0, left: 0, borderTopWidth: 4, borderLeftWidth: 4, borderTopLeftRadius: 18 }]} />
-              <View style={[s.corner, { top: 0, right: 0, borderTopWidth: 4, borderRightWidth: 4, borderTopRightRadius: 18 }]} />
-              <View style={[s.corner, { bottom: 0, left: 0, borderBottomWidth: 4, borderLeftWidth: 4, borderBottomLeftRadius: 18 }]} />
-              <View style={[s.corner, { bottom: 0, right: 0, borderBottomWidth: 4, borderRightWidth: 4, borderBottomRightRadius: 18 }]} />
-            </View>
-            <Pressable onPress={() => setScannerOpen(false)} style={s.scanClose}>
-              <Ionicons name="close" size={20} color={colors.forestDark} />
-              <Text style={{ marginLeft: 8, fontWeight: '800', color: colors.forestDark, fontSize: 16 }}>Close scanner</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
+      <BarcodeScanner
+        visible={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onBarcodeScanned={(data) => onBarcodeScanned({ data })}
+      />
     </View>
   );
 }

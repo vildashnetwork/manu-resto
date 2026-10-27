@@ -13,10 +13,12 @@ Expo + React Native (JavaScript/JSX) + Expo Router. The app sends restaurant dat
 ```bash
 npm install
 npx expo install --fix   # aligns package versions with your installed Expo SDK
-npx expo start           # scan the QR code with Expo Go, or press "a" for Android
+npx expo start --dev-client
 ```
 
 The configured logo splash screen is native app configuration. Expo Go shows its own launch screen, and over-the-air JavaScript updates cannot change the native splash assets. To see the branded splash on Android, build and install a fresh native app after changing `app.json` (for example, `npx expo run:android` with Android Studio set up, or an EAS Android build).
+
+Barcode scanning uses VisionCamera and ZXing native modules, not Expo Camera or Google Play Services. Expo Go does not include these native modules. The new architecture is enabled for Nitro Modules. Build and install a development client with `eas build --platform android --profile development`, then start Metro with `npm start`. For a standalone APK, build and install `eas build --platform android --profile preview`. A JavaScript reload or OTA update cannot add native modules to an already-built app.
 
 ## What is built (Phase 2 MVP)
 

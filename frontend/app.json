@@ -8,6 +8,7 @@
     "icon": "./public/bglogo.png",
     "userInterfaceStyle": "light",
     "backgroundColor": "#1E3A2B",
+    "newArchEnabled": true,
     "plugins": [
       "expo-router",
       "expo-sqlite",
@@ -21,13 +22,6 @@
           "backgroundColor": "#0B3827"
         }
       ],
-      [
-        "expo-camera",
-        {
-          "cameraPermission": "Allow Manu's Resto Manager to scan product barcodes."
-        }
-      ],
-      "./plugins/withGooglePlayStoreQuery",
       [
         "expo-local-authentication",
         {
@@ -45,7 +39,7 @@
     ],
     "android": {
       "package": "com.manusresto.manager",
-      "versionCode": 25,
+      "versionCode": 26,
       "adaptiveIcon": {
         "foregroundImage": "./public/nobglogo.png",
         "backgroundColor": "#0B3827"
@@ -58,7 +52,10 @@
       ]
     },
     "ios": {
-      "bundleIdentifier": "com.manusresto.manager"
+      "bundleIdentifier": "com.manusresto.manager",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow Manu's Resto Manager to scan product barcodes."
+      }
     },
     "extra": {
       "router": {

@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { ScrollView, View, Text, Image, Alert, Pressable, StyleSheet, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useCameraPermission } from 'react-native-vision-camera';
+import NativeBarcodeScanner from '../../src/components/NativeBarcodeScanner';
 import {
   Hero, Card, Btn, Chip, Field, SearchBox, Sheet, IconDot, Pill, Empty, Fab, useLoad, ScreenShimmer, screenStyle, body,
 } from '../../src/components/ui';
@@ -37,7 +38,7 @@ export default function Stock() {
   const [outOfStockOnly, setOutOfStockOnly] = useState(false);
   const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
   const [barcodeScanAction, setBarcodeScanAction] = useState('assign');
-  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const { hasPermission: hasCameraPermission, requestPermission: requestCameraPermission } = useCameraPermission();
 
   async function chooseImage() {
     if (busy) return;
@@ -122,9 +123,9 @@ export default function Stock() {
   }
 
   async function openBarcodeScanner(action = 'assign') {
-    if (!cameraPermission?.granted) {
-      const permission = await requestCameraPermission();
-      if (!permission.granted) {
+    if (!hasCameraPermission) {
+      const granted = await requestCameraPermission();
+      if (!granted) {
         Alert.alert('Camera permission required', 'Allow camera access to scan a product barcode.');
         return;
       }
@@ -133,7 +134,7 @@ export default function Stock() {
     setBarcodeScannerOpen(true);
   }
 
-  function onBarcodeScanned({ data }, action = barcodeScanAction) {
+  function onBarcodeScanned(data, action = barcodeScanAction) {
     const barcode = String(data || '').trim();
     if (!barcode) return;
     setBarcodeScannerOpen(false);
@@ -156,6 +157,11 @@ export default function Stock() {
       return;
     }
     setF((current) => ({ ...current, barcode }));
+  }
+
+  function onScannerError(error) {
+    setBarcodeScannerOpen(false);
+    Alert.alert('Camera unavailable', error.message);
   }
 
   function openMove(product) {
@@ -376,14 +382,7 @@ export default function Stock() {
 
       <Modal visible={barcodeScannerOpen} animationType="slide" onRequestClose={() => setBarcodeScannerOpen(false)}>
         <View style={s.scanner}>
-          <CameraView
-            style={StyleSheet.absoluteFill}
-            facing="back"
-            autofocus="on"
-            onBarcodeScanned={onBarcodeScanned}
-            barcodeScannerSettings={{ barcodeTypes: ['aztec', 'ean13', 'ean8', 'qr', 'pdf417', 'upc_e', 'datamatrix', 'code39', 'code93', 'itf14', 'codabar', 'code128', 'upc_a'] }}
-            onMountError={(event) => Alert.alert('Camera unavailable', event.message)}
-          />
+          <NativeBarcodeScanner active={barcodeScannerOpen} onBarcodeScanned={onBarcodeScanned} onError={onScannerError} />
           <View style={s.scannerHeader}>
             <Text style={s.scannerTitle}>Scan product barcode</Text>
             <Text style={s.scannerHint}>Hold the barcode inside the frame</Text>

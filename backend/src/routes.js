@@ -58,6 +58,7 @@ function serializeCustomer(customer) {
     ...value,
     id: String(value._id),
     credit_limit: value.creditLimit,
+    active: value.active,
   };
 }
 
@@ -309,6 +310,53 @@ router.post('/customers', asyncRoute(async (req, res) => {
   res.status(201).json({ customer: serializeCustomer(customer) });
 }));
 
+router.put('/customers/:id', asyncRoute(async (req, res) => {
+  if (!isId(req.params.id)) throw httpError(400, 'Invalid customer ID.');
+  const { name, phone, code, creditLimit, openingDebt, notes } = req.body;
+  if (typeof name !== 'string' && name !== undefined) throw httpError(400, 'Name must be a string.');
+  if (typeof creditLimit !== 'undefined' && creditLimit !== null && (!Number.isSafeInteger(creditLimit) || creditLimit < 0)) {
+    throw httpError(400, 'Credit limit must be a non-negative whole number or omitted.');
+  }
+  if (typeof openingDebt !== 'undefined' && openingDebt !== null && (!Number.isSafeInteger(openingDebt) || openingDebt < 0)) {
+    throw httpError(400, 'Opening debt must be a non-negative whole number or omitted.');
+  }
+
+  const customer = await withTransaction(async (session) => {
+    const current = await Customer.findOne({ _id: req.params.id, active: true }).session(session);
+    if (!current) throw httpError(404, 'Customer not found.');
+    if (typeof name === 'string' && name.trim()) current.name = name.trim();
+    if (typeof phone === 'string') current.phone = phone.trim() || null;
+    if (typeof code === 'string') current.code = code.trim() || null;
+    if (typeof creditLimit !== 'undefined') current.creditLimit = creditLimit || 0;
+    if (typeof openingDebt !== 'undefined') {
+      const debtChange = (openingDebt || 0) - current.balance;
+      current.balance = openingDebt || 0;
+      if (debtChange !== 0) {
+        await Ledger.create([{
+          customerId: current._id,
+          type: 'adjustment',
+          amount: debtChange,
+          ref_type: 'manual_adjustment',
+          note: 'Customer debt adjusted manually',
+        }], { session, ordered: true });
+      }
+    }
+    if (typeof notes === 'string') current.notes = notes.trim() || null;
+    await current.save({ session });
+    return current;
+  });
+  res.json({ customer: serializeCustomer(customer) });
+}));
+
+router.delete('/customers/:id', asyncRoute(async (req, res) => {
+  if (!isId(req.params.id)) throw httpError(400, 'Invalid customer ID.');
+  const customer = await Customer.findOne({ _id: req.params.id, active: true });
+  if (!customer) throw httpError(404, 'Customer not found.');
+  customer.active = false;
+  await customer.save();
+  res.json({ customer: serializeCustomer(customer) });
+}));
+
 router.get('/customers/:id', asyncRoute(async (req, res) => {
   if (!isId(req.params.id)) throw httpError(400, 'Invalid customer ID.');
   const customer = await Customer.findOne({ _id: req.params.id, active: true });
@@ -376,6 +424,10 @@ router.post('/payments/repayments', asyncRoute(async (req, res) => {
 
 router.post('/sales', asyncRoute(async (req, res) => {
   const { idempotencyKey, items, customerId, customerName, payments = [], allowOverLimit = false } = req.body;
+  const createdAt = req.body.createdAt ?? now();
+  if (!Number.isSafeInteger(createdAt) || createdAt < 0 || createdAt > now()) {
+    throw httpError(400, 'Sale date must be a valid time that is not in the future.');
+  }
   if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) throw httpError(400, 'Idempotency key is required.');
   if (!Array.isArray(items) || items.length === 0) throw httpError(400, 'The cart is empty.');
   if (!Array.isArray(payments)) throw httpError(400, 'Payments must be a list.');
@@ -453,7 +505,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
         }
       }
 
-      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const stamp = new Date(createdAt).toISOString().slice(0, 10).replace(/-/g, '');
       const receiptNo = `MR-${stamp}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
       const [created] = await Sale.create([{
         receipt_no: receiptNo,
@@ -464,6 +516,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
         paid_amount: paid,
         credit_amount: credit,
         idempotencyKey: idempotencyKey.trim(),
+        created_at: createdAt,
       }], { session, ordered: true });
 
       if (preparedPayments.length > 0) {
@@ -473,6 +526,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
           customerId: customer?._id ?? null,
           ...payment,
           idempotencyKey: `${idempotencyKey.trim()}:${index}`,
+          created_at: createdAt,
         })), { session, ordered: true });
       }
       if (credit > 0) {
@@ -484,6 +538,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
           ref_type: 'sale',
           ref_id: String(created._id),
           note: `Credit sale ${receiptNo}`,
+          created_at: createdAt,
         }], { session, ordered: true });
       }
       const movements = saleItems
@@ -493,6 +548,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
           type: 'sale',
           qty: -item.qty,
           refId: String(created._id),
+          created_at: createdAt,
         }));
       if (movements.length) await StockMovement.create(movements, { session, ordered: true });
       return {
@@ -659,6 +715,42 @@ router.post('/sales/:id/cancel', asyncRoute(async (req, res) => {
     return current;
   });
   res.json({ sale: serializeSale(sale) });
+}));
+
+
+router.delete('/products/:id', asyncRoute(async (req, res) => {
+  if (!isId(req.params.id)) throw httpError(400, 'Invalid product ID.');
+  const product = await Product.findOne({ _id: req.params.id, active: true });
+  if (!product) throw httpError(404, 'Product not found.');
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    if (product.tracked && product.stock > 0) {
+      await StockMovement.create([
+        {
+          productId: product._id,
+          type: 'adjust_down',
+          qty: -product.stock,
+          note: 'Deleted stock',
+          refId: req.body?.reason || 'manual deletion',
+        },
+      ], { session });
+      await Product.updateOne(
+        { _id: product._id },
+        { $set: { stock: 0 } },
+        { session }
+      );
+    }
+    product.active = false;
+    await product.save({ session });
+    await session.commitTransaction();
+    res.json({ product: serializeProduct(product) });
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    session.endSession();
+  }
 }));
 
 router.post('/expenses', asyncRoute(async (req, res) => {

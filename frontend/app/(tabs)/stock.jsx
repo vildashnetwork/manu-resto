@@ -1,12 +1,15 @@
-import React, { useMemo, useState } from 'react';
-import { ScrollView, View, Text, Image, Alert, Pressable, StyleSheet, Modal } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ScrollView, View, Text, Image, Alert, Pressable, StyleSheet, Modal,
+  Keyboard, Platform, TextInput, findNodeHandle, useWindowDimensions,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useCameraPermission } from 'react-native-vision-camera';
 import NativeBarcodeScanner from '../../src/components/NativeBarcodeScanner';
 import {
-  Hero, Card, Btn, Chip, Field, SearchBox, Sheet, IconDot, Pill, Empty, Fab, useLoad, ScreenShimmer, screenStyle, body,
+  Hero, Card, Btn, Chip, Field, SearchBox, IconDot, Pill, Empty, Fab, useLoad, ScreenShimmer, screenStyle, body,
 } from '../../src/components/ui';
-import { getProducts, createProduct, updateProduct, addStockMovement } from '../../src/api/repo';
+import { getProducts, createProduct, updateProduct, addStockMovement, deleteProduct } from '../../src/api/repo';
 import { chooseAndUploadProductImage } from '../../src/api/cloudinary';
 import { fcfa, parseAmount } from '../../src/utils';
 import { colors, CATEGORY_ICONS, radius, shadow } from '../../src/theme';
@@ -20,7 +23,80 @@ const MOVES = [
   { key: 'complimentary', label: 'Complimentary', sign: -1, icon: 'gift-outline' },
   { key: 'adjust_down', label: 'Adjust down', sign: -1, icon: 'arrow-down-circle-outline' },
 ];
-const EMPTY = { name: '', category: 'Meals', unit: '', price: '', cost: '', threshold: '', opening: '', tracked: false, barcode: '' };
+const EMPTY = { name: '', category: 'Meals', unit: '', price: '', cost: '', threshold: '', opening: '', quantity: '', tracked: false, barcode: '' };
+
+/**
+ * Keyboard-aware bottom sheet.
+ * - Reads the real keyboard height and lifts the sheet above it.
+ * - Shrinks the sheet's max height so the form stays scrollable.
+ * - Scrolls the focused input into view.
+ */
+function KeyboardSheet({ visible, title, onClose, tall, children }) {
+  const { height: winH } = useWindowDimensions();
+  const [kb, setKb] = useState(0);
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEvt, (e) => {
+      setKb(e.endCoordinates?.height || 0);
+      // after layout settles, scroll the focused field into view
+      setTimeout(scrollFocusedIntoView, 120);
+    });
+    const hide = Keyboard.addListener(hideEvt, () => setKb(0));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
+
+  function scrollFocusedIntoView() {
+    const input = TextInput.State.currentlyFocusedInput?.();
+    const sv = scrollRef.current;
+    if (!input || !sv) return;
+    input.measureLayout(
+      findNodeHandle(sv),
+      (_x, y) => sv.scrollTo({ y: Math.max(0, y - 90), animated: true }),
+      () => { }
+    );
+  }
+
+  const topGap = 48;
+  const available = winH - kb - topGap;
+  const sheetMax = kb > 0 ? available : winH * (tall ? 0.92 : 0.8);
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      <View style={[ks.overlay, { paddingBottom: kb }]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => { Keyboard.dismiss(); onClose?.(); }} />
+        <View style={[ks.sheet, { maxHeight: sheetMax }]}>
+          <View style={ks.handle} />
+          <View style={ks.header}>
+            <Text style={ks.title} numberOfLines={1}>{title}</Text>
+            <Pressable onPress={onClose} hitSlop={12} accessibilityLabel="Close">
+              <Ionicons name="close" size={24} color={colors.ink} />
+            </Pressable>
+          </View>
+          <ScrollView
+            ref={scrollRef}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: kb > 0 ? 40 : 28 }}
+          >
+            {children}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const ks = StyleSheet.create({
+  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' },
+  sheet: { backgroundColor: colors.cream, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden' },
+  handle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: '#CFC7B1', marginTop: 8 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14 },
+  title: { flex: 1, fontSize: 18, fontWeight: '800', color: colors.ink, marginRight: 12 },
+});
 
 export default function Stock() {
   const [products, reload, loading] = useLoad(getProducts);
@@ -38,6 +114,7 @@ export default function Stock() {
   const [outOfStockOnly, setOutOfStockOnly] = useState(false);
   const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
   const [barcodeScanAction, setBarcodeScanAction] = useState('assign');
+  const [deletingId, setDeletingId] = useState(null);
   const { hasPermission: hasCameraPermission, requestPermission: requestCameraPermission } = useCameraPermission();
 
   async function chooseImage() {
@@ -97,6 +174,32 @@ export default function Stock() {
     } finally { setBusy(false); }
   }
 
+  function confirmDelete(product) {
+    if (deletingId) return;
+    Alert.alert(
+      'Delete stock item?',
+      `Delete ${product.name} from the active stock list? Current stock will be cleared and past sales will remain in reports.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingId(product.id);
+            try {
+              await deleteProduct(product.id);
+              reload();
+            } catch (e) {
+              Alert.alert('Cannot delete product', e.message);
+            } finally {
+              setDeletingId(null);
+            }
+          },
+        },
+      ]
+    );
+  }
+
   function editProduct(product) {
     setEditing(product);
     setF({
@@ -130,6 +233,7 @@ export default function Stock() {
         return;
       }
     }
+    Keyboard.dismiss();
     setBarcodeScanAction(action);
     setBarcodeScannerOpen(true);
   }
@@ -254,10 +358,19 @@ export default function Stock() {
                   </View>
                 </Pressable>
                 <View style={s.actions}>
-                  <Btn small variant="soft" icon="create-outline" title="Edit" style={{ flex: 1 }} onPress={() => editProduct(p)} />
+                  <Btn small variant="soft" icon="create-outline" title="Edit" style={{ flex: 1 }} onPress={() => editProduct(p)} disabled={!!deletingId} />
                   {p.tracked ? (
-                    <Btn small variant="soft" icon="swap-vertical-outline" title="Adjust stock" style={{ flex: 1.4 }} onPress={() => openMove(p)} />
+                    <Btn small variant="soft" icon="swap-vertical-outline" title="Adjust" style={{ flex: 1 }} onPress={() => openMove(p)} disabled={!!deletingId} />
                   ) : null}
+                  <Btn
+                    small
+                    variant="dangerSoft"
+                    icon="trash-outline"
+                    title={deletingId === p.id ? 'Deleting…' : 'Delete'}
+                    style={{ flex: 1 }}
+                    onPress={() => confirmDelete(p)}
+                    disabled={!!deletingId}
+                  />
                 </View>
               </View>
             );
@@ -276,7 +389,7 @@ export default function Stock() {
 
       <Fab label="Product" onPress={newProduct} />
 
-      <Sheet visible={add} tall title={editing ? `Edit ${editing.name}` : 'New product'} onClose={() => { setAdd(false); setEditing(null); }}>
+      <KeyboardSheet visible={add} tall title={editing ? `Edit ${editing.name}` : 'New product'} onClose={() => { setAdd(false); setEditing(null); }}>
         <Text style={s.label}>Product image {editing ? '' : '(required)'}</Text>
         <Pressable onPress={chooseImage} disabled={busy} style={({ pressed }) => [s.imagePicker, { opacity: pressed || busy ? 0.8 : 1 }]}>
           {imageUrl ? (
@@ -309,7 +422,7 @@ export default function Stock() {
         <View style={s.barcodeFieldHeader}>
           <Text style={s.label}>Barcode (optional)</Text>
           <Pressable
-            onPress={openBarcodeScanner}
+            onPress={() => openBarcodeScanner('assign')}
             style={({ pressed }) => [s.scanBarcodeButton, { opacity: pressed ? 0.75 : 1 }]}
             accessibilityRole="button"
             accessibilityLabel="Scan product barcode"
@@ -354,9 +467,9 @@ export default function Stock() {
           disabled={busy || (!imageUrl && !editing)}
           style={{ marginTop: 6 }}
         />
-      </Sheet>
+      </KeyboardSheet>
 
-      <Sheet visible={!!move} title={move ? move.name : ''} onClose={() => setMove(null)}>
+      <KeyboardSheet visible={!!move} title={move ? move.name : ''} onClose={() => setMove(null)}>
         {move && (
           <Card style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
             <View>
@@ -378,7 +491,7 @@ export default function Stock() {
         <Field label="Quantity" keyboardType="number-pad" value={mQty} onChangeText={setMQty} inputStyle={{ fontSize: 22, fontWeight: '800', minHeight: 58 }} />
         <Field label="Note" value={mNote} onChangeText={setMNote} />
         <Btn variant="gold" icon="checkmark-circle" title={busy ? 'Saving…' : 'Save movement'} onPress={saveMove} disabled={busy || parseAmount(mQty) <= 0} />
-      </Sheet>
+      </KeyboardSheet>
 
       <Modal visible={barcodeScannerOpen} animationType="slide" onRequestClose={() => setBarcodeScannerOpen(false)}>
         <View style={s.scanner}>

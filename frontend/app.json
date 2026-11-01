@@ -39,7 +39,7 @@
     ],
     "android": {
       "package": "com.manusresto.manager",
-      "versionCode": 26,
+      "versionCode": 28,
       "adaptiveIcon": {
         "foregroundImage": "./public/nobglogo.png",
         "backgroundColor": "#0B3827"

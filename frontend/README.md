@@ -2,6 +2,8 @@ npm install -g eas-cli
 eas --version
 eas login
 
+eas build:configure
+
 eas build --platform android --profile preview
 
 # Manu's Resto Manager (MVP)
@@ -24,9 +26,9 @@ Barcode scanning uses VisionCamera and ZXing native modules, not Expo Camera or 
 
 - **Home**: today's sales, collected, credit sales, debt recovered, expenses, outstanding debt, low-stock warning, recent sales.
 - **Sales**: searchable product grid, barcode scanning, adjustable checkout prices, mixed payments (Cash / MTN MoMo / Xcash / Orange Money / Bank transfer), partial payment with the rest on credit, credit-limit authorization, and branded printable/shareable receipts.
-- **Customers**: profiles, credit limit, opening debt (labelled as migrated), dated statement with running balance, repayments (never counted as sales).
-- **Stock**: searchable and filterable products with editable details and barcodes, tracked stock, purchases, wastage, damage, complimentary, adjustments, low-stock threshold, and required Cloudinary images.
-- **Reports**: preset or custom date ranges; paid/unpaid filters; sales vs collected vs credit vs debt recovered vs expenses kept separate; payment-method breakdown; expected cash; best sellers; gross profit estimate; expenses; editable sale payment records and cancellation.
+- **Customers**: profiles, editable customer debt and credit limit, customer deletion, opening debt (labelled as migrated), dated statement with running balance, and repayments (never counted as sales).
+- **Stock**: searchable and filterable products with editable details and barcodes, tracked stock, purchases, wastage, damage, complimentary, adjustments, low-stock threshold, required Cloudinary images, and confirmed product deletion.
+- **Reports**: preset or custom date ranges; manual dated sales with searchable products, customer assignment, and payment amount; downloadable, shareable, or printable customer receipts; paid/unpaid filters; sales vs collected vs credit vs debt recovered vs expenses kept separate; payment-method breakdown; expected cash; best sellers; gross profit estimate; expenses; editable sale payment records and cancellation.
 
 The branded app icon uses `public/bglogo.png`; Android adaptive icons use `public/nobglogo.png` over the restaurant green. Receipts embed the transparent logo so it prints consistently on web and native platforms.
 
@@ -34,14 +36,14 @@ The branded app icon uses `public/bglogo.png`; Android adaptive icons use `publi
 
 Set `EXPO_PUBLIC_API_URL` to the API root if it differs from the default (include `/api` if that is your Express prefix). The frontend expects these JSON endpoints:
 
-- `GET /products`, `POST /products`, `PUT /products/:id`
+- `GET /products`, `POST /products`, `PUT /products/:id`, `DELETE /products/:id`
 - `POST /stock/movements`
-- `GET /customers`, `GET /customers/:id`, `POST /customers`, `GET /customers/:id/statement`
+- `GET /customers`, `GET /customers/:id`, `POST /customers`, `PUT /customers/:id`, `DELETE /customers/:id`, `GET /customers/:id/statement`
 - `POST /payments/repayments`
 - `POST /sales`, `GET /sales?limit=&from=&to=`, `POST /sales/:id/cancel`, `PUT /sales/:id/payment`
 - `POST /expenses`, `GET /reports?from=&to=`
 
-List responses may be a raw array or an object keyed by the resource name (or `data`). Single-record responses may be the record itself, under the resource name, or under `data`. Reports should provide the fields consumed by the Reports screen: totals/counts, `byMethod`, `topProducts`, and `expList`. Sale requests include `idempotencyKey`, `items`, `customerId`, `payments`, and `allowOverLimit`. Product requests include `imageUrl`.
+List responses may be a raw array or an object keyed by the resource name (or `data`). Single-record responses may be the record itself, under the resource name, or under `data`. Reports should provide the fields consumed by the Reports screen: totals/counts, `byMethod`, `topProducts`, and `expList`. Sale requests include `idempotencyKey`, `items`, `customerId`, `payments`, and `allowOverLimit`; manual dated sales also include `createdAt` as a Unix timestamp in milliseconds. Product requests include `imageUrl`.
 
 The matching Express/MongoDB backend now lives in `../backend`; see its README for startup, MongoDB transaction requirements, and deployment configuration. The app does not connect to MongoDB directly; database credentials stay on the server.
 

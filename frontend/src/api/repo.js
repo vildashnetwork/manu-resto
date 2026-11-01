@@ -157,6 +157,28 @@ export async function createCustomer(customer) {
   return String(result.id ?? result._id);
 }
 
+export async function updateCustomer({ id, name, phone, code, creditLimit, openingDebt, notes }) {
+  if (!id) throw new Error('Customer ID is required');
+  const payload = {};
+  if (typeof name === 'string') payload.name = name.trim() || null;
+  if (typeof phone === 'string') payload.phone = phone.trim() || null;
+  if (typeof code === 'string') payload.code = code.trim() || null;
+  if (typeof creditLimit !== 'undefined') payload.creditLimit = creditLimit || 0;
+  if (typeof openingDebt !== 'undefined') payload.openingDebt = openingDebt || 0;
+  if (typeof notes === 'string') payload.notes = notes.trim() || null;
+  return entity(await put(`/customers/${encodeURIComponent(id)}`, payload), 'customer');
+}
+
+export async function deleteCustomer(id) {
+  if (!id) throw new Error('Customer ID is required');
+  return entity(await request(`/customers/${encodeURIComponent(id)}`, { method: 'DELETE' }), 'customer');
+}
+
+export async function deleteProduct(id) {
+  if (!id) throw new Error('Product ID is required');
+  return entity(await request(`/products/${encodeURIComponent(id)}`, { method: 'DELETE' }), 'product');
+}
+
 export async function getStatement(customerId) {
   return collection(
     await get(`/customers/${encodeURIComponent(customerId)}/statement`),
@@ -175,7 +197,7 @@ export async function recordRepayment({ idempotencyKey, customerId, amount, meth
   });
 }
 
-export async function createSale({ idempotencyKey, items, customerId, customerName, payments, allowOverLimit = false }) {
+export async function createSale({ idempotencyKey, items, customerId, customerName, payments, allowOverLimit = false, createdAt }) {
   if (!items?.length) throw new Error('The cart is empty');
   const payload = await post('/sales', {
     idempotencyKey,
@@ -184,6 +206,7 @@ export async function createSale({ idempotencyKey, items, customerId, customerNa
     customerName: customerName || null,
     payments,
     allowOverLimit,
+    ...(typeof createdAt === 'number' ? { createdAt } : {}),
   });
   const result = entity(payload, 'sale');
   return { sale: normalizeSale(result), duplicate: Boolean(payload?.duplicate ?? result.duplicate) };

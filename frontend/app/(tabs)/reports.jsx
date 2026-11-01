@@ -1,16 +1,26 @@
 import React, { useState } from 'react';
-import { ScrollView, View, Text, Alert, Pressable, StyleSheet } from 'react-native';
+import { ScrollView, View, Text, Alert, Pressable, StyleSheet, Keyboard } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  Hero, Card, Btn, Chip, Field, Sheet, Row, Section, Segmented, Stat, IconDot, Pill, Money, Empty,
+  Hero, Card, Btn, Chip, Field, Row, Section, Segmented, Stat, IconDot, Pill, Money, Empty,
   useLoad, ScreenShimmer, screenStyle, body,
 } from '../../src/components/ui';
+import KeyboardSheet from '../../src/components/KeyboardSheet';
 import DateRangeSheet, { PRESETS, presetFor, rangeLabel, dayEnd } from '../../src/components/DateRangeSheet';
-import { getReport, getRecentSales, addExpense, cancelSale, updateSalePayment } from '../../src/api/repo';
-import { fcfa, num, parseAmount, fmtDateTime } from '../../src/utils';
+import { getReport, getRecentSales, addExpense, cancelSale, updateSalePayment, getProducts, getCustomers, createSale } from '../../src/api/repo';
+import { getReportLogoDataUri, buildSalesReportHtml, buildSaleReceiptHtml, savePdf, printHtml, safeFilePart } from '../../src/reports/salesReportPdf';
+import { fcfa, num, parseAmount, fmtDateTime, uid } from '../../src/utils';
 import { colors, radius, METHODS, METHOD_ICONS, METHOD_COLORS, EXPENSE_CATEGORIES } from '../../src/theme';
 
 const QUICK = ['Today', 'Yesterday', '7 days', '30 days', 'This month', 'Last month'];
+const PERIOD_TITLE = {
+  Today: 'Daily sales report',
+  Yesterday: 'Daily sales report',
+  '7 days': 'Weekly sales report',
+  '30 days': 'Monthly sales report',
+  'This month': 'Monthly sales report',
+  'Last month': 'Monthly sales report',
+};
 
 function FlowRow({ label, value, sign, color, bold, icon }) {
   return (
@@ -29,6 +39,20 @@ function Mini({ label, value }) {
       <Money value={value} size={15} color="#fff" />
     </View>
   );
+}
+
+function localDateInput(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function localDateTimestamp(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  if (date.getFullYear() !== Number(year) || date.getMonth() !== Number(month) - 1 || date.getDate() !== Number(day)) return null;
+  return date.getTime();
 }
 
 export default function Reports() {
@@ -53,11 +77,51 @@ export default function Reports() {
   const [paidInput, setPaidInput] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualLoading, setManualLoading] = useState(false);
+  const [manualSaving, setManualSaving] = useState(false);
+  const [manualProducts, setManualProducts] = useState([]);
+  const [manualCustomers, setManualCustomers] = useState([]);
+  const [manualSearch, setManualSearch] = useState('');
+  const [manualCustomerSearch, setManualCustomerSearch] = useState('');
+  const [manualCategory, setManualCategory] = useState('All');
+  const [manualCart, setManualCart] = useState({});
+  const [manualCustomerId, setManualCustomerId] = useState('');
+  const [manualPaid, setManualPaid] = useState('0');
+  const [manualMethod, setManualMethod] = useState('Cash');
+  const [manualDate, setManualDate] = useState(localDateInput());
+  const [receiptBusyId, setReceiptBusyId] = useState(null);
 
   const activeKey = presetFor(range.from, range.to);
+  const periodTitle = PERIOD_TITLE[activeKey] || 'Sales report';
+
+  async function exportReport(share = false) {
+    const report = d?.report;
+    if (!report || exporting) return;
+    setExporting(true);
+    try {
+      const label = rangeLabel(range.from, range.to);
+      // fetch the full list of sales for the period (the screen only loads the latest 100)
+      const [logoUri, allSales] = await Promise.all([
+        getReportLogoDataUri(),
+        getRecentSales(2000, range.from, dayEnd(range.to)),
+      ]);
+      const html = buildSalesReportHtml({
+        logoUri, title: periodTitle, periodLabel: label, report, sales: allSales,
+      });
+      const fileName = `${safeFilePart(`Manus Resto - ${periodTitle} - ${label}`, 'sales-report')}.pdf`;
+      await savePdf({ html, fileName, share });
+    } catch (e) {
+      Alert.alert(share ? 'Cannot share report' : 'Cannot download report', e.message || String(e));
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function saveExpense() {
     if (busy) return;
+    Keyboard.dismiss();
     setBusy(true);
     try {
       await addExpense({ category: expCat, amount: parseAmount(expAmt), method: expMethod, note: expNote });
@@ -67,6 +131,7 @@ export default function Reports() {
 
   async function doCancel() {
     if (busy) return;
+    Keyboard.dismiss();
     setBusy(true);
     try {
       await cancelSale(cancelId, reason);
@@ -81,6 +146,7 @@ export default function Reports() {
       Alert.alert('Invalid amount', 'The paid amount cannot be greater than the sale total.');
       return;
     }
+    Keyboard.dismiss();
     setBusy(true);
     try {
       await updateSalePayment(editingSale.id, { paidAmount, method: paymentMethod, idempotencyKey: `report-edit-${editingSale.id}-${Date.now()}` });
@@ -89,6 +155,122 @@ export default function Reports() {
     } catch (e) {
       Alert.alert('Cannot update sale payment', e.message);
     } finally { setBusy(false); }
+  }
+
+  async function openManualSale() {
+    if (manualLoading) return;
+    setManualLoading(true);
+    try {
+      const [products, customers] = await Promise.all([getProducts(), getCustomers()]);
+      setManualProducts(products);
+      setManualCustomers(customers);
+      setManualOpen(true);
+    } catch (e) {
+      Alert.alert('Cannot open manual sale', e.message);
+    } finally {
+      setManualLoading(false);
+    }
+  }
+
+  const manualLines = manualProducts.filter((product) => manualCart[product.id] > 0).map((product) => ({
+    ...product,
+    qty: manualCart[product.id],
+  }));
+  const manualTotal = manualLines.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const shownManualProducts = manualProducts.filter((product) =>
+    (manualCategory === 'All' || product.category === manualCategory) &&
+    (product.name + ' ' + (product.barcode || '')).toLowerCase().includes(manualSearch.trim().toLowerCase())
+  );
+  const shownManualCustomers = manualCustomers.filter((customer) =>
+    (customer.name + ' ' + (customer.phone || '') + ' ' + (customer.code || '')).toLowerCase().includes(manualCustomerSearch.trim().toLowerCase())
+  );
+  const selectedManualCustomer = manualCustomers.find((customer) => customer.id === manualCustomerId);
+
+  function changeManualQty(productId, delta) {
+    setManualCart((current) => ({ ...current, [productId]: Math.max(0, (current[productId] || 0) + delta) }));
+  }
+
+  async function saveManualSale(allowOverLimit = false) {
+    if (manualSaving) return;
+    if (!manualLines.length) {
+      Alert.alert('No products selected', 'Add at least one product to this sale.');
+      return;
+    }
+    const paidAmount = parseAmount(manualPaid);
+    if (paidAmount > manualTotal) {
+      Alert.alert('Invalid amount', 'The amount paid cannot be greater than the sale total.');
+      return;
+    }
+    if (paidAmount < manualTotal && !manualCustomerId) {
+      Alert.alert('Select a customer', 'A customer is required when the sale has an unpaid balance.');
+      return;
+    }
+    const createdAt = localDateTimestamp(manualDate);
+    if (createdAt === null || createdAt > Date.now()) {
+      Alert.alert('Invalid sale date', 'Enter a valid date in YYYY-MM-DD format that is not in the future.');
+      return;
+    }
+
+    Keyboard.dismiss();
+    setManualSaving(true);
+    try {
+      await createSale({
+        idempotencyKey: uid(),
+        items: manualLines.map((item) => ({
+          productId: item.id,
+          name: item.name,
+          unitPrice: item.price,
+          unitCost: item.cost,
+          qty: item.qty,
+          tracked: !!item.tracked,
+        })),
+        customerId: manualCustomerId || null,
+        payments: paidAmount > 0 ? [{ method: manualMethod, amount: paidAmount }] : [],
+        createdAt,
+        allowOverLimit,
+      });
+      setManualOpen(false);
+      setManualCart({});
+      setManualCustomerId('');
+      setManualPaid('0');
+      setManualMethod('Cash');
+      setManualDate(localDateInput());
+      setManualSearch('');
+      setManualCustomerSearch('');
+      setRange({ from: createdAt, to: createdAt });
+    } catch (e) {
+      if (e.code === 'CREDIT_LIMIT') {
+        const { balance, limit, credit } = e.details;
+        Alert.alert(
+          'Credit limit exceeded',
+          `Current debt ${fcfa(balance)} + this sale on credit ${fcfa(credit)} exceeds the limit of ${fcfa(limit)}.`,
+          [{ text: 'Cancel', style: 'cancel' }, { text: 'Authorize', onPress: () => saveManualSale(true) }]
+        );
+      } else {
+        Alert.alert('Cannot record manual sale', e.message);
+      }
+    } finally {
+      setManualSaving(false);
+    }
+  }
+
+  async function exportSaleReceipt(sale, action) {
+    if (receiptBusyId) return;
+    setReceiptBusyId(sale.id);
+    try {
+      const logoUri = await getReportLogoDataUri();
+      const html = buildSaleReceiptHtml({ logoUri, sale });
+      if (action === 'print') {
+        await printHtml(html);
+      } else {
+        const fileName = `${safeFilePart(`${sale.receipt_no || 'receipt'} - ${sale.customer_name || 'customer'}`, 'receipt')}.pdf`;
+        await savePdf({ html, fileName, share: action === 'share' });
+      }
+    } catch (e) {
+      Alert.alert(`Cannot ${action} receipt`, e.message || String(e));
+    } finally {
+      setReceiptBusyId(null);
+    }
   }
 
   const quick = (key) => { const [a, b] = PRESETS[key](); setRange({ from: a, to: b }); };
@@ -141,7 +323,36 @@ export default function Reports() {
 
       {!r ? <View style={{ height: 200 }} /> : (
         <View style={body}>
+          <Card style={{ marginBottom: 14 }}>
+            <Text style={s.pdfTitle}>Sales entered after the fact?</Text>
+            <Text style={s.pdfSub}>Record a sale for a selected day, including products, customer, and amount paid.</Text>
+            <Btn
+              small
+              variant="gold"
+              icon="add-circle-outline"
+              title={manualLoading ? 'Loading…' : 'Record sale manually'}
+              onPress={openManualSale}
+              disabled={manualLoading}
+              style={{ marginTop: 12 }}
+            />
+          </Card>
+
           <Card>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <IconDot name="document-text-outline" size={38} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={s.pdfTitle}>{periodTitle} · PDF</Text>
+                <Text style={s.pdfSub} numberOfLines={2}>{rangeLabel(range.from, range.to)}</Text>
+              </View>
+            </View>
+            <View style={s.pdfActions}>
+              <Btn small variant="gold" icon="download-outline" title={exporting ? 'Preparing…' : 'Download PDF'} style={{ flex: 1 }} onPress={() => exportReport(false)} disabled={exporting} />
+              <Btn small variant="soft" icon="share-social-outline" title="Share" style={{ flex: 1 }} onPress={() => exportReport(true)} disabled={exporting} />
+            </View>
+            <Text style={s.fine}>Pick Today for a daily report, 7 days for weekly, This month for monthly, or any custom dates.</Text>
+          </Card>
+
+          <Card style={{ marginTop: 14 }}>
             <Text style={s.cap}>How sales were paid</Text>
             <View style={s.split}>
               {r.totalSales > 0 ? (
@@ -259,11 +470,21 @@ export default function Reports() {
                   </View>
                   {x.cancel_reason ? <Text style={[s.saleSub, { marginTop: 6 }]}>Reason: {x.cancel_reason}</Text> : null}
                   {!cancelled && (
-                    <View style={s.saleActions}>
-                      <Btn small variant="soft" icon="create-outline" title="Edit paid" style={{ flex: 1 }}
-                        onPress={() => { setEditingSale(x); setPaidInput(String(x.paid_amount || 0)); setPaymentMethod('Cash'); }} />
-                      <Btn small variant="dangerSoft" icon="close-circle-outline" title="Cancel" style={{ flex: 1 }} onPress={() => setCancelId(x.id)} />
-                    </View>
+                    <>
+                      <View style={s.saleActions}>
+                        <Btn small variant="soft" icon="create-outline" title="Edit paid" style={{ flex: 1 }}
+                          onPress={() => { setEditingSale(x); setPaidInput(String(x.paid_amount || 0)); setPaymentMethod('Cash'); }} />
+                        <Btn small variant="dangerSoft" icon="close-circle-outline" title="Cancel" style={{ flex: 1 }} onPress={() => setCancelId(x.id)} />
+                      </View>
+                      <View style={s.receiptActions}>
+                        <Btn small variant="soft" icon="print-outline" title="Print" style={{ flex: 1 }}
+                          onPress={() => exportSaleReceipt(x, 'print')} disabled={receiptBusyId === x.id} />
+                        <Btn small variant="soft" icon="download-outline" title="Download" style={{ flex: 1 }}
+                          onPress={() => exportSaleReceipt(x, 'download')} disabled={receiptBusyId === x.id} />
+                        <Btn small variant="soft" icon="share-social-outline" title="Share" style={{ flex: 1 }}
+                          onPress={() => exportSaleReceipt(x, 'share')} disabled={receiptBusyId === x.id} />
+                      </View>
+                    </>
                   )}
                 </Card>
               );
@@ -280,7 +501,85 @@ export default function Reports() {
         onApply={(a, b) => { setRange({ from: a, to: b }); setPickerOpen(false); }}
       />
 
-      <Sheet visible={!!editingSale} title="Edit amount paid" onClose={() => setEditingSale(null)}>
+      <KeyboardSheet visible={manualOpen} title="Record sale manually" onClose={() => setManualOpen(false)} tall>
+        <Field
+          label="Sale date (YYYY-MM-DD)"
+          value={manualDate}
+          onChangeText={setManualDate}
+          placeholder="2026-10-31"
+          autoCapitalize="none"
+        />
+        <Text style={s.cap}>Customer</Text>
+        <Chip label={manualCustomerId ? 'Clear customer' : 'Walk-in sale'} active={!manualCustomerId} onPress={() => setManualCustomerId('')} />
+        {selectedManualCustomer ? <Text style={s.manualHint}>Selected: {selectedManualCustomer.name}</Text> : null}
+        <Field
+          label="Search customers"
+          value={manualCustomerSearch}
+          onChangeText={setManualCustomerSearch}
+          placeholder="Name, phone or code"
+        />
+        <View style={s.manualCustomerList}>
+          {shownManualCustomers.map((customer) => (
+            <Chip
+              key={customer.id}
+              label={`${customer.name}${customer.balance > 0 ? ` · owes ${num(customer.balance)}` : ''}`}
+              active={manualCustomerId === customer.id}
+              onPress={() => setManualCustomerId(customer.id)}
+            />
+          ))}
+          {shownManualCustomers.length === 0 && <Text style={s.manualHint}>No customers match your search.</Text>}
+        </View>
+
+        <Text style={[s.cap, { marginTop: 16 }]}>Products</Text>
+        <Field label="Filter products" value={manualSearch} onChangeText={setManualSearch} placeholder="Search product name or barcode" />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
+          {['All', ...Array.from(new Set(manualProducts.map((product) => product.category)))].map((category) => (
+            <Chip key={category} label={category} active={manualCategory === category} onPress={() => setManualCategory(category)} />
+          ))}
+        </ScrollView>
+        {shownManualProducts.map((product) => (
+          <View key={product.id} style={s.manualProduct}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.manualProductName}>{product.name}</Text>
+              <Text style={s.manualHint}>{product.category} · {fcfa(product.price)}</Text>
+            </View>
+            <Btn small variant="soft" icon="remove" title="" onPress={() => changeManualQty(product.id, -1)} disabled={!manualCart[product.id]} />
+            <Text style={s.manualQty}>{manualCart[product.id] || 0}</Text>
+            <Btn small variant="gold" icon="add" title="" onPress={() => changeManualQty(product.id, 1)} />
+          </View>
+        ))}
+        {shownManualProducts.length === 0 && <Text style={s.manualHint}>No products match your filters.</Text>}
+
+        <Text style={[s.cap, { marginTop: 16 }]}>Selected items · {fcfa(manualTotal)}</Text>
+        {manualLines.map((item) => (
+          <View key={item.id} style={s.manualSelectedLine}>
+            <Text style={{ flex: 1, color: colors.ink, fontWeight: '700' }}>{item.qty} × {item.name}</Text>
+            <Text style={{ color: colors.ink, fontWeight: '800' }}>{fcfa(item.qty * item.price)}</Text>
+          </View>
+        ))}
+        <Field
+          label="Amount paid (FCFA)"
+          keyboardType="number-pad"
+          value={manualPaid}
+          onChangeText={setManualPaid}
+          inputStyle={{ fontSize: 22, fontWeight: '800', minHeight: 58 }}
+        />
+        <Text style={s.manualHint}>Balance due: {fcfa(Math.max(0, manualTotal - parseAmount(manualPaid)))}</Text>
+        <Text style={[s.cap, { marginTop: 14 }]}>Payment method</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 8, marginBottom: 14 }}>
+          {METHODS.map((method) => (
+            <Chip key={method} icon={METHOD_ICONS[method]} label={method} active={manualMethod === method} onPress={() => setManualMethod(method)} />
+          ))}
+        </View>
+        <Btn
+          icon="checkmark-circle"
+          title={manualSaving ? 'Recording…' : `Record sale · ${fcfa(manualTotal)}`}
+          onPress={saveManualSale}
+          disabled={manualSaving || manualLines.length === 0 || parseAmount(manualPaid) > manualTotal}
+        />
+      </KeyboardSheet>
+
+      <KeyboardSheet visible={!!editingSale} title="Edit amount paid" onClose={() => setEditingSale(null)}>
         <Card style={{ marginBottom: 16 }}>
           <Text style={{ color: colors.muted, fontWeight: '600' }}>{editingSale?.receipt_no}</Text>
           <Money value={editingSale?.total} size={26} />
@@ -300,9 +599,9 @@ export default function Reports() {
           The previous payment entries are kept and marked reversed, then the corrected amount is recorded. The change is written to the audit log.
         </Text>
         <Btn icon="checkmark-circle" title={busy ? 'Saving…' : 'Save payment adjustment'} onPress={saveSalePayment} disabled={busy || parseAmount(paidInput) > (editingSale?.total || 0)} />
-      </Sheet>
+      </KeyboardSheet>
 
-      <Sheet visible={expOpen} title="New expense" onClose={() => setExpOpen(false)}>
+      <KeyboardSheet visible={expOpen} title="New expense" onClose={() => setExpOpen(false)}>
         <Text style={s.cap}>Category</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 8, marginBottom: 14 }}>
           {EXPENSE_CATEGORIES.map((c) => <Chip key={c} label={c} active={expCat === c} onPress={() => setExpCat(c)} />)}
@@ -314,15 +613,15 @@ export default function Reports() {
         </View>
         <Field label="Note" value={expNote} onChangeText={setExpNote} />
         <Btn icon="checkmark" title={busy ? 'Saving…' : 'Save expense'} onPress={saveExpense} disabled={busy || parseAmount(expAmt) <= 0} />
-      </Sheet>
+      </KeyboardSheet>
 
-      <Sheet visible={!!cancelId} title="Cancel sale" onClose={() => setCancelId(null)}>
+      <KeyboardSheet visible={!!cancelId} title="Cancel sale" onClose={() => setCancelId(null)}>
         <Text style={{ color: colors.muted, marginBottom: 14, lineHeight: 20 }}>
           The sale stays on record as cancelled. Stock is restored and any credit is reversed. A reason is required.
         </Text>
         <Field label="Reason" value={reason} onChangeText={setReason} />
         <Btn variant="danger" icon="close-circle" title={busy ? 'Cancelling…' : 'Confirm cancellation'} onPress={doCancel} disabled={busy || !reason.trim()} />
-      </Sheet>
+      </KeyboardSheet>
     </ScrollView>
   );
 }
@@ -344,6 +643,17 @@ const s = StyleSheet.create({
   miniRow: { flexDirection: 'row', gap: 8, marginTop: 16 },
   mini: { flex: 1, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: radius.md, padding: 10 },
   miniLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '600', marginBottom: 4 },
+
+  pdfTitle: { fontSize: 15, fontWeight: '800', color: colors.ink },
+  pdfSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
+  pdfActions: { flexDirection: 'row', gap: 8, marginTop: 14 },
+  receiptActions: { flexDirection: 'row', gap: 6, marginTop: 8 },
+  manualCustomerList: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 6, marginBottom: 8 },
+  manualProduct: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line, paddingVertical: 8, gap: 7 },
+  manualProductName: { color: colors.ink, fontWeight: '700', fontSize: 14 },
+  manualHint: { color: colors.muted, fontSize: 12, marginTop: 3 },
+  manualQty: { minWidth: 22, textAlign: 'center', color: colors.ink, fontWeight: '800' },
+  manualSelectedLine: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 8 },
 
   cap: { fontSize: 12, fontWeight: '800', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 12 },
   split: { flexDirection: 'row', height: 14, borderRadius: 7, overflow: 'hidden', backgroundColor: '#EFEBE0' },

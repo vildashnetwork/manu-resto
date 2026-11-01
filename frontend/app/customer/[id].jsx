@@ -1,8 +1,9 @@
 import React, { useRef, useState } from 'react';
-import { ScrollView, View, Text, Alert, StyleSheet } from 'react-native';
+import { ScrollView, View, Text, Alert, StyleSheet, Keyboard, Modal } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Hero, Card, Btn, Chip, Field, Sheet, Section, Avatar, IconDot, Money, Empty, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
-import { getCustomer, getStatement, recordRepayment } from '../../src/api/repo';
+import { Hero, Card, Btn, Chip, Field, Section, Avatar, IconDot, Money, Empty, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
+import KeyboardSheet from '../../src/components/KeyboardSheet';
+import { getCustomer, getStatement, recordRepayment, updateCustomer, deleteCustomer } from '../../src/api/repo';
 import { fcfa, parseAmount, fmtDateTime, uid } from '../../src/utils';
 import { colors, METHODS, METHOD_ICONS } from '../../src/theme';
 
@@ -11,6 +12,7 @@ const TYPE = {
   credit_sale: { label: 'Credit sale', icon: 'arrow-up', up: true },
   payment: { label: 'Repayment', icon: 'arrow-down', up: false },
   reversal: { label: 'Reversal', icon: 'return-down-back', up: false },
+  adjustment: { label: 'Debt adjustment', icon: 'create-outline', up: true },
 };
 
 export default function CustomerDetail() {
@@ -24,6 +26,20 @@ export default function CustomerDetail() {
   const [busy, setBusy] = useState(false);
   const keyRef = useRef(uid());
 
+  // Edit customer info sheet state
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editCode, setEditCode] = useState('');
+  const [editLimit, setEditLimit] = useState('');
+  const [editDebt, setEditDebt] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editBusy, setEditBusy] = useState(false);
+
+  // Delete confirmation state
+  const [delOpen, setDelOpen] = useState(false);
+  const [delBusy, setDelBusy] = useState(false);
+
   if (loading && !d) return <ScreenShimmer variant="detail" />;
   if (!d?.customer) return <View style={screenStyle} />;
   const { customer: c, rows } = d;
@@ -31,6 +47,7 @@ export default function CustomerDetail() {
 
   async function save() {
     if (busy) return;
+    Keyboard.dismiss();
     setBusy(true);
     try {
       await recordRepayment({
@@ -46,9 +63,53 @@ export default function CustomerDetail() {
     }
   }
 
+  async function saveEdit() {
+    if (editBusy) return;
+    if (!editName.trim()) {
+      Alert.alert('Name required', 'Enter a name for this customer.');
+      return;
+    }
+    Keyboard.dismiss();
+    setEditBusy(true);
+    try {
+      await updateCustomer({
+        id, name: editName, phone: editPhone, code: editCode,
+        creditLimit: parseAmount(editLimit) || 0, openingDebt: parseAmount(editDebt) || 0, notes: editNotes,
+      });
+      setEditOpen(false);
+      reload();
+    } catch (e) {
+      Alert.alert('Cannot update customer', e.message);
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  async function doDelete() {
+    setDelBusy(true);
+    try {
+      await deleteCustomer(id);
+      setDelOpen(false);
+      router.back();
+      reload();
+    } catch (e) {
+      Alert.alert('Cannot delete customer', e.message);
+    } finally {
+      setDelBusy(false);
+    }
+  }
+
   return (
     <ScrollView style={screenStyle} showsVerticalScrollIndicator={false}>
       <Hero eyebrow={[c.phone, c.code].filter(Boolean).join(' · ') || 'Customer account'} title={c.name} onBack={() => router.back()}>
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+          <Btn variant="ghost" icon="pencil" title="Edit account" onPress={() => {
+            setEditName(c.name || ''); setEditPhone(c.phone || ''); setEditCode(c.code || '');
+            setEditLimit(String(c.credit_limit || 0)); setEditDebt(String(c.balance || 0)); setEditNotes(c.notes || '');
+            setEditOpen(true);
+          }} />
+          <Btn variant="danger" icon="trash" title="Delete customer" onPress={() => setDelOpen(true)} />
+        </View>
         <Text style={s.heroLabel}>Outstanding balance</Text>
         <Money value={c.balance} size={38} color={c.balance > 0 ? '#fff' : '#9FE0BC'} style={{ marginTop: 2 }} />
         {c.credit_limit > 0 ? (
@@ -92,7 +153,7 @@ export default function CustomerDetail() {
         </Section>
       </View>
 
-      <Sheet visible={open} title="Record repayment" onClose={() => setOpen(false)}>
+      <KeyboardSheet visible={open} title="Record repayment" onClose={() => setOpen(false)}>
         <Card style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
           <Avatar name={c.name} />
           <View style={{ marginLeft: 12, flex: 1 }}>
@@ -109,7 +170,32 @@ export default function CustomerDetail() {
         {method !== 'Cash' && <Field label="Reference (transaction ID)" value={ref} onChangeText={setRef} />}
         <Text style={{ color: colors.muted, fontSize: 12, marginBottom: 14 }}>A repayment lowers the debt. It is not counted as a new sale.</Text>
         <Btn icon="checkmark-circle" title={busy ? 'Saving…' : 'Confirm repayment'} onPress={save} disabled={busy || parseAmount(amount) <= 0} />
-      </Sheet>
+      </KeyboardSheet>
+
+      <KeyboardSheet visible={editOpen} title="Edit customer account" onClose={() => setEditOpen(false)} tall>
+        <Field label="Name *" value={editName} onChangeText={setEditName} />
+        <Field label="Phone" keyboardType="phone-pad" value={editPhone} onChangeText={setEditPhone} />
+        <Field label="Code (optional)" value={editCode} onChangeText={setEditCode} />
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Field style={{ flex: 1 }} label="Credit limit (FCFA)" keyboardType="number-pad" value={editLimit} onChangeText={setEditLimit} />
+          <Field style={{ flex: 1 }} label="Debt / amount owed (FCFA)" keyboardType="number-pad" value={editDebt} onChangeText={setEditDebt} />
+        </View>
+        <Field label="Notes" value={editNotes} onChangeText={setEditNotes} />
+        <Btn icon="checkmark-circle" title={editBusy ? 'Saving…' : 'Save changes'} onPress={saveEdit} disabled={editBusy} variant="primary" />
+      </KeyboardSheet>
+
+      <Modal visible={delOpen} transparent animationType="fade" onRequestClose={() => setDelOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={[s.deleteSheet, { backgroundColor: '#fff' }]}>
+            <Text style={s.deleteTitle}>Delete customer?</Text>
+            <Text style={s.deleteSub}>This will remove "{c.name}" from your customer list.</Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
+              <Btn variant="dangerSoft" title="Cancel" onPress={() => setDelOpen(false)} small />
+              <Btn variant="danger" icon="trash" title={delBusy ? 'Deleting…' : 'Delete'} onPress={doDelete} disabled={delBusy} />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -124,4 +210,7 @@ const s = StyleSheet.create({
   itemSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   itemAmt: { fontSize: 15, fontWeight: '800' },
   label: { fontSize: 13, color: colors.muted, marginBottom: 8, fontWeight: '600' },
+  deleteSheet: { padding: 22, borderRadius: 20, width: '86%', alignItems: 'center' },
+  deleteTitle: { fontSize: 18, fontWeight: '800', color: colors.ink, marginBottom: 8 },
+  deleteSub: { color: colors.muted, textAlign: 'center', marginBottom: 16 },
 });

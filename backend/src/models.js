@@ -83,7 +83,7 @@ const saleAdjustmentSchema = new Schema({
 
 const ledgerSchema = new Schema({
   customerId: { type: Schema.Types.ObjectId, ref: 'Customer', required: true, index: true },
-  type: { type: String, enum: ['opening', 'credit_sale', 'payment', 'reversal'], required: true },
+  type: { type: String, enum: ['opening', 'credit_sale', 'payment', 'reversal', 'adjustment'], required: true },
   amount: { type: Number, required: true },
   ref_type: { type: String, default: null },
   ref_id: { type: String, default: null },

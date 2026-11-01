@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { ScrollView, View, Text, Alert, StyleSheet } from 'react-native';
+import { ScrollView, View, Text, Alert, StyleSheet, Keyboard, Modal } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Hero, Card, Btn, Chip, Field, SearchBox, Sheet, Row, Avatar, Pill, Money, Empty, Fab, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
-import { getCustomers, createCustomer } from '../../src/api/repo';
+import { Hero, Card, Btn, Chip, Field, SearchBox, Row, Avatar, Pill, Money, Empty, Fab, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
+import KeyboardSheet from '../../src/components/KeyboardSheet';
+import { getCustomers, createCustomer, deleteCustomer } from '../../src/api/repo';
 import { fcfa, parseAmount } from '../../src/utils';
 import { colors } from '../../src/theme';
 
@@ -16,6 +17,23 @@ export default function Customers() {
   const [open, setOpen] = useState(false);
   const [f, setF] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
+  const [delOpen, setDelOpen] = useState(false);
+  const [delId, setDelId] = useState(null);
+  const [delBusy, setDelBusy] = useState(false);
+
+  async function doDelete() {
+    setDelBusy(true);
+    try {
+      await deleteCustomer(delId);
+      setDelOpen(false);
+      setDelId(null);
+      reload();
+    } catch (e) {
+      Alert.alert('Cannot delete customer', e.message);
+    } finally {
+      setDelBusy(false);
+    }
+  }
 
   const all = list ?? [];
   const customers = all
@@ -27,6 +45,7 @@ export default function Customers() {
 
   async function save() {
     if (saving) return;
+    Keyboard.dismiss();
     setSaving(true);
     try {
       await createCustomer({
@@ -67,16 +86,28 @@ export default function Customers() {
               customers.map((c, i) => {
                 const used = c.credit_limit > 0 ? Math.min(1, Math.max(0, c.balance) / c.credit_limit) : 0;
                 return (
-                  <View key={c.id}>
-                    <Row
-                      last={i === customers.length - 1 && c.credit_limit <= 0}
-                      leading={<Avatar name={c.name} />}
-                      left={c.name}
-                      sub={[c.phone, c.code].filter(Boolean).join(' · ') || 'No contact details'}
-                      right={c.balance > 0 ? fcfa(c.balance) : 'Settled'}
-                      rightColor={c.balance > 0 ? colors.danger : colors.ok}
-                      onPress={() => router.push(`/customer/${c.id}`)}
-                    />
+                  <View key={c.id} style={{ marginTop: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <View style={{ flex: 1 }}>
+                        <Row
+                          last={i === customers.length - 1 && c.credit_limit <= 0}
+                          leading={<Avatar name={c.name} />}
+                          left={c.name}
+                          sub={[c.phone, c.code].filter(Boolean).join(' · ') || 'No contact details'}
+                          right={c.balance > 0 ? fcfa(c.balance) : 'Settled'}
+                          rightColor={c.balance > 0 ? colors.danger : colors.ok}
+                          onPress={() => router.push(`/customer/${c.id}`)}
+                        />
+                      </View>
+                      <Btn
+                        variant="dangerSoft"
+                        icon="trash-outline"
+                        small
+                        title="Delete"
+                        onPress={() => { setDelId(c.id); setDelOpen(true); }}
+                        style={{ marginLeft: 8 }}
+                      />
+                    </View>
                     {c.credit_limit > 0 && (
                       <View style={s.limitWrap}>
                         <View style={s.limitTrack}>
@@ -95,7 +126,7 @@ export default function Customers() {
 
       <Fab label="Customer" onPress={() => setOpen(true)} />
 
-      <Sheet visible={open} title="New customer" onClose={() => setOpen(false)}>
+      <KeyboardSheet visible={open} title="New customer" onClose={() => setOpen(false)}>
         <Field label="Name *" value={f.name} onChangeText={(v) => setF({ ...f, name: v })} />
         <Field label="Phone" keyboardType="phone-pad" value={f.phone} onChangeText={(v) => setF({ ...f, phone: v })} />
         <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -105,7 +136,22 @@ export default function Customers() {
         <Field label="Opening debt from paper book (FCFA)" keyboardType="number-pad" value={f.opening} onChangeText={(v) => setF({ ...f, opening: v })} />
         <Field label="Notes" value={f.notes} onChangeText={(v) => setF({ ...f, notes: v })} />
         <Btn icon="checkmark" title={saving ? 'Saving…' : 'Save customer'} onPress={save} disabled={saving} />
-      </Sheet>
+      </KeyboardSheet>
+
+      <Modal visible={delOpen} transparent animationType="fade" onRequestClose={() => setDelOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ padding: 22, borderRadius: 20, width: '86%', alignItems: 'center', backgroundColor: '#fff' }}>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: colors.ink, marginBottom: 8 }}>Delete customer?</Text>
+            <Text style={{ color: colors.muted, textAlign: 'center', marginBottom: 16 }}>
+              This will remove {all.find((customer) => customer.id === delId)?.name || 'this customer'} from your list. Their transaction history will remain in reports.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 16 }}>
+              <Btn variant="dangerSoft" title="Cancel" onPress={() => setDelOpen(false)} small />
+              <Btn variant="danger" icon="trash" title={delBusy ? 'Deleting…' : 'Delete'} onPress={doDelete} disabled={delBusy} />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

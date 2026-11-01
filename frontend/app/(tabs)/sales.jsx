@@ -1,14 +1,15 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { View, Text, Image, ScrollView, Pressable, Alert, StyleSheet, TextInput, Modal, Platform } from 'react-native';
+import { View, Text, Image, ScrollView, Pressable, Alert, StyleSheet, TextInput, Modal, Platform, Keyboard } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Asset } from 'expo-asset';
 import { useCameraPermission } from 'react-native-vision-camera';
 import NativeBarcodeScanner from '../../src/components/NativeBarcodeScanner';
+import KeyboardSheet from '../../src/components/KeyboardSheet';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import {
-  Hero, Card, Btn, Chip, Field, SearchBox, Sheet, Row, Avatar, IconDot, Money, Pill, Empty, useLoad, ScreenShimmer, screenStyle,
+  Hero, Card, Btn, Chip, Field, SearchBox, Row, Avatar, IconDot, Money, Pill, Empty, useLoad, ScreenShimmer, screenStyle,
 } from '../../src/components/ui';
 import { getProducts, getCustomers, createSale } from '../../src/api/repo';
 import { fcfa, parseAmount, uid } from '../../src/utils';
@@ -94,6 +95,7 @@ export default function Sales() {
 
   async function submit(allowOverLimit = false) {
     if (busy) return;
+    Keyboard.dismiss();
     setBusy(true);
     try {
       const items = lines.map((l) => ({
@@ -136,6 +138,7 @@ export default function Sales() {
         return;
       }
     }
+    Keyboard.dismiss();
     setScannerOpen(true);
   }
 
@@ -299,7 +302,6 @@ export default function Sales() {
         Alert.alert('Receipt downloaded', `Saved as ${fileName}`);
         return;
       }
-      const printOptions = { html, ...RECEIPT_PAGE };
       if (!FileSystem.documentDirectory) throw new Error('The app document folder is unavailable.');
       if (!(await Sharing.isAvailableAsync())) throw new Error('Sharing is not available on this device.');
       const shareUri = `${FileSystem.documentDirectory}${fileName}`;
@@ -398,7 +400,7 @@ export default function Sales() {
         </Pressable>
       )}
 
-      <Sheet
+      <KeyboardSheet
         visible={checkoutOpen}
         tall
         title={pickCustomer ? 'Choose customer' : 'Complete sale'}
@@ -420,7 +422,7 @@ export default function Sales() {
                     sub={c.phone || undefined}
                     right={c.balance > 0 ? fcfa(c.balance) : 'No debt'}
                     rightColor={c.balance > 0 ? colors.danger : colors.ok}
-                    onPress={() => { setCustomer(c); setCustomerName(c.name); setPickCustomer(false); }}
+                    onPress={() => { Keyboard.dismiss(); setCustomer(c); setCustomerName(c.name); setPickCustomer(false); }}
                   />
                 ))}
               {customers.length === 0 && <Empty icon="people-outline" title="No customers yet" hint="Add them in the Customers tab." />}
@@ -486,7 +488,7 @@ export default function Sales() {
             )}
 
             <Text style={s.h}>Payment received now</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.paymentTabs}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={s.paymentTabs}>
               {PAYMENT_TABS.map((tab) => {
                 const active = paymentTab === tab.method;
                 return (
@@ -563,9 +565,9 @@ export default function Sales() {
             <Btn variant="gold" icon="checkmark-circle" title={busy ? 'Saving…' : `Record sale · ${fcfa(total)}`} onPress={() => submit(false)} disabled={!canConfirm} style={{ marginTop: 16 }} />
           </View>
         )}
-      </Sheet>
+      </KeyboardSheet>
 
-      <Sheet visible={!!receipt} tall title="Sale recorded" onClose={() => setReceipt(null)}>
+      <KeyboardSheet visible={!!receipt} tall title="Sale recorded" onClose={() => setReceipt(null)}>
         {receipt && (
           <View>
             <View style={s.successBanner}>
@@ -648,7 +650,7 @@ export default function Sales() {
             </View>
           </View>
         )}
-      </Sheet>
+      </KeyboardSheet>
 
       <Modal visible={scannerOpen} animationType="slide" onRequestClose={() => setScannerOpen(false)}>
         <View style={{ flex: 1, backgroundColor: '#000' }}>

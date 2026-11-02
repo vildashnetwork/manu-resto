@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { ScrollView, View, Text, Alert, StyleSheet, Keyboard, Modal } from 'react-native';
+import { ScrollView, View, Text, Alert, StyleSheet, Keyboard, Modal, Pressable } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { Hero, Card, Btn, Chip, Field, SearchBox, Row, Avatar, Pill, Money, Empty, Fab, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
+import { Hero, Card, Btn, Chip, Field, SearchBox, Avatar, Money, Empty, Fab, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
 import KeyboardSheet from '../../src/components/KeyboardSheet';
-import { getCustomers, createCustomer, deleteCustomer } from '../../src/api/repo';
+import { getCustomers, createCustomer, updateCustomer, deleteCustomer } from '../../src/api/repo';
 import { fcfa, parseAmount } from '../../src/utils';
 import { colors } from '../../src/theme';
 
@@ -17,6 +18,9 @@ export default function Customers() {
   const [open, setOpen] = useState(false);
   const [f, setF] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [editForm, setEditForm] = useState(EMPTY);
+  const [editBusy, setEditBusy] = useState(false);
   const [delOpen, setDelOpen] = useState(false);
   const [delId, setDelId] = useState(null);
   const [delBusy, setDelBusy] = useState(false);
@@ -62,6 +66,45 @@ export default function Customers() {
     }
   }
 
+  function openEdit(customer) {
+    setEditing(customer);
+    setEditForm({
+      name: customer.name || '',
+      phone: customer.phone || '',
+      code: customer.code || '',
+      limit: String(customer.credit_limit || 0),
+      opening: String(customer.balance || 0),
+      notes: customer.notes || '',
+    });
+  }
+
+  async function saveEdit() {
+    if (editBusy) return;
+    if (!editForm.name.trim()) {
+      Alert.alert('Name required', 'Enter a name for this customer.');
+      return;
+    }
+    Keyboard.dismiss();
+    setEditBusy(true);
+    try {
+      await updateCustomer({
+        id: editing.id,
+        name: editForm.name,
+        phone: editForm.phone,
+        code: editForm.code,
+        creditLimit: parseAmount(editForm.limit),
+        openingDebt: parseAmount(editForm.opening),
+        notes: editForm.notes,
+      });
+      setEditing(null);
+      reload();
+    } catch (e) {
+      Alert.alert('Cannot update customer', e.message);
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
   if (loading && !list) return <ScreenShimmer variant="list" />;
 
   return (
@@ -79,48 +122,65 @@ export default function Customers() {
             {['All', 'Owing'].map((v) => <Chip key={v} label={v === 'All' ? 'All customers' : 'Owing money'} active={filter === v} onPress={() => setFilter(v)} />)}
           </View>
 
-          <Card style={{ paddingVertical: 4 }}>
-            {customers.length === 0 ? (
+          {customers.length === 0 ? (
+            <Card>
               <Empty icon="people-outline" title="No customers found" hint="Tap the + button to add a regular customer." />
-            ) : (
-              customers.map((c, i) => {
-                const used = c.credit_limit > 0 ? Math.min(1, Math.max(0, c.balance) / c.credit_limit) : 0;
-                return (
-                  <View key={c.id} style={{ marginTop: 8 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <View style={{ flex: 1 }}>
-                        <Row
-                          last={i === customers.length - 1 && c.credit_limit <= 0}
-                          leading={<Avatar name={c.name} />}
-                          left={c.name}
-                          sub={[c.phone, c.code].filter(Boolean).join(' · ') || 'No contact details'}
-                          right={c.balance > 0 ? fcfa(c.balance) : 'Settled'}
-                          rightColor={c.balance > 0 ? colors.danger : colors.ok}
-                          onPress={() => router.push(`/customer/${c.id}`)}
-                        />
+            </Card>
+          ) : (
+            customers.map((c) => {
+              const owing = c.balance > 0;
+              const used = c.credit_limit > 0 ? Math.min(1, Math.max(0, c.balance) / c.credit_limit) : 0;
+              const barColor = used >= 1 ? colors.danger : used > 0.75 ? colors.warn : colors.ok;
+              return (
+                <Card key={c.id} style={s.card}>
+                  <Pressable
+                    onPress={() => router.push(`/customer/${c.id}`)}
+                    style={({ pressed }) => [s.cardMain, pressed && { opacity: 0.7 }]}
+                  >
+                    <View style={s.topRow}>
+                      <Avatar name={c.name} />
+                      <View style={s.nameWrap}>
+                        <Text style={s.name} numberOfLines={2}>{c.name}</Text>
+                        <Text style={s.sub} numberOfLines={1}>
+                          {[c.phone, c.code].filter(Boolean).join(' · ') || 'No contact details'}
+                        </Text>
                       </View>
-                      <Btn
-                        variant="dangerSoft"
-                        icon="trash-outline"
-                        small
-                        title="Delete"
-                        onPress={() => { setDelId(c.id); setDelOpen(true); }}
-                        style={{ marginLeft: 8 }}
-                      />
+                      <View style={s.balanceWrap}>
+                        <Text style={[s.balance, { color: owing ? colors.danger : colors.ok }]} numberOfLines={1}>
+                          {owing ? fcfa(c.balance) : 'Settled'}
+                        </Text>
+                        {owing && <Text style={s.balanceLabel}>owed</Text>}
+                      </View>
                     </View>
+
                     {c.credit_limit > 0 && (
                       <View style={s.limitWrap}>
                         <View style={s.limitTrack}>
-                          <View style={[s.limitFill, { width: `${used * 100}%`, backgroundColor: used >= 1 ? colors.danger : used > 0.75 ? colors.warn : colors.ok }]} />
+                          <View style={[s.limitFill, { width: `${used * 100}%`, backgroundColor: barColor }]} />
                         </View>
                         <Text style={s.limitText}>limit {fcfa(c.credit_limit)}</Text>
                       </View>
                     )}
+                  </Pressable>
+
+                  <View style={s.actions}>
+                    <Pressable onPress={() => openEdit(c)} style={[s.actionBtn, s.editBtn]} hitSlop={6}>
+                      <Ionicons name="pencil-outline" size={15} color={colors.ink} />
+                      <Text style={[s.actionText, { color: colors.ink }]}>Edit</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => { setDelId(c.id); setDelOpen(true); }}
+                      style={[s.actionBtn, s.delBtn]}
+                      hitSlop={6}
+                    >
+                      <Ionicons name="trash-outline" size={15} color={colors.danger} />
+                      <Text style={[s.actionText, { color: colors.danger }]}>Delete</Text>
+                    </Pressable>
                   </View>
-                );
-              })
-            )}
-          </Card>
+                </Card>
+              );
+            })
+          )}
         </View>
       </ScrollView>
 
@@ -136,6 +196,18 @@ export default function Customers() {
         <Field label="Opening debt from paper book (FCFA)" keyboardType="number-pad" value={f.opening} onChangeText={(v) => setF({ ...f, opening: v })} />
         <Field label="Notes" value={f.notes} onChangeText={(v) => setF({ ...f, notes: v })} />
         <Btn icon="checkmark" title={saving ? 'Saving…' : 'Save customer'} onPress={save} disabled={saving} />
+      </KeyboardSheet>
+
+      <KeyboardSheet visible={Boolean(editing)} title="Edit customer" onClose={() => setEditing(null)} tall>
+        <Field label="Name *" value={editForm.name} onChangeText={(name) => setEditForm({ ...editForm, name })} />
+        <Field label="Phone" keyboardType="phone-pad" value={editForm.phone} onChangeText={(phone) => setEditForm({ ...editForm, phone })} />
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <Field style={{ flex: 1 }} label="Code (optional)" value={editForm.code} onChangeText={(code) => setEditForm({ ...editForm, code })} />
+          <Field style={{ flex: 1 }} label="Credit limit (FCFA)" keyboardType="number-pad" value={editForm.limit} onChangeText={(limit) => setEditForm({ ...editForm, limit })} />
+        </View>
+        <Field label="Debt / amount owed (FCFA)" keyboardType="number-pad" value={editForm.opening} onChangeText={(opening) => setEditForm({ ...editForm, opening })} />
+        <Field label="Notes" value={editForm.notes} onChangeText={(notes) => setEditForm({ ...editForm, notes })} />
+        <Btn icon="checkmark-circle" title={editBusy ? 'Saving…' : 'Save changes'} onPress={saveEdit} disabled={editBusy} />
       </KeyboardSheet>
 
       <Modal visible={delOpen} transparent animationType="fade" onRequestClose={() => setDelOpen(false)}>
@@ -159,8 +231,34 @@ export default function Customers() {
 const s = StyleSheet.create({
   heroLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '600', marginTop: 20 },
   heroSub: { color: 'rgba(255,255,255,0.75)', fontSize: 13, marginTop: 6 },
-  limitWrap: { flexDirection: 'row', alignItems: 'center', paddingLeft: 54, paddingBottom: 12, marginTop: -4 },
+
+  card: { marginBottom: 12, padding: 0, overflow: 'hidden' },
+  cardMain: { paddingHorizontal: 14, paddingTop: 14, paddingBottom: 12 },
+  topRow: { flexDirection: 'row', alignItems: 'center' },
+  nameWrap: { flex: 1, marginLeft: 12, marginRight: 10 },
+  name: { fontSize: 16, fontWeight: '700', color: colors.ink },
+  sub: { fontSize: 12.5, color: colors.muted, marginTop: 2 },
+  balanceWrap: { alignItems: 'flex-end', flexShrink: 0 },
+  balance: { fontSize: 15, fontWeight: '800' },
+  balanceLabel: { fontSize: 11, color: colors.muted, marginTop: 1 },
+
+  limitWrap: { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
   limitTrack: { flex: 1, height: 5, borderRadius: 3, backgroundColor: '#EFEBE0', overflow: 'hidden' },
   limitFill: { height: 5, borderRadius: 3 },
   limitText: { marginLeft: 10, fontSize: 11, color: colors.muted, fontWeight: '600' },
+
+  actions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E8E3D6',
+    backgroundColor: '#FAF8F2',
+  },
+  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10 },
+  editBtn: { backgroundColor: '#EFEBE0' },
+  delBtn: { backgroundColor: 'rgba(220,38,38,0.1)' },
+  actionText: { fontSize: 13, fontWeight: '700' },
 });

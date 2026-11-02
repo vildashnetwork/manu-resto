@@ -108,6 +108,10 @@ export default function Stock() {
   const [mQty, setMQty] = useState('');
   const [mNote, setMNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [delOpen, setDelOpen] = useState(false);
+  const [delId, setDelId] = useState(null);
+  const [delName, setDelName] = useState('');
+  const [delBusy, setDelBusy] = useState(false);
   const [imageUrl, setImageUrl] = useState('');
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
@@ -283,6 +287,12 @@ export default function Stock() {
   const tracked = allProducts.filter((p) => p.tracked);
   const outOfStockCount = tracked.filter((p) => p.stock <= 0).length;
   const lowCount = tracked.filter((p) => p.low_stock_threshold > 0 && p.stock <= p.low_stock_threshold).length;
+  const drinksStock = tracked
+    .filter((p) => p.category === 'Drinks')
+    .reduce((total, p) => total + (Number(p.stock) || 0), 0);
+  const mealsStock = tracked
+    .filter((p) => p.category === 'Meals')
+    .reduce((total, p) => total + (Number(p.stock) || 0), 0);
 
   if (loading && !products) return <ScreenShimmer variant="list" />;
 
@@ -300,6 +310,24 @@ export default function Stock() {
         </Hero>
 
         <View style={body}>
+          <View style={s.stockTotals}>
+            <Card style={s.stockTotalCard}>
+              <View style={s.stockTotalHeading}>
+                <IconDot name={CATEGORY_ICONS.Drinks} size={30} />
+                <Text style={s.stockTotalTitle}>Drinks in stock</Text>
+              </View>
+              <Text style={s.stockTotalValue}>{drinksStock}</Text>
+              <Text style={s.stockTotalCaption}>Total drinks</Text>
+            </Card>
+            <Card style={s.stockTotalCard}>
+              <View style={s.stockTotalHeading}>
+                <IconDot name={CATEGORY_ICONS.Meals} size={30} bg={colors.goldTint} color={colors.warn} />
+                <Text style={s.stockTotalTitle}>Food plates</Text>
+              </View>
+              <Text style={s.stockTotalValue}>{mealsStock}</Text>
+              <Text style={s.stockTotalCaption}>Total plates</Text>
+            </Card>
+          </View>
           <View style={s.stockSearchRow}>
             <SearchBox value={search} onChangeText={setSearch} placeholder="Search products or barcode…" style={{ flex: 1 }} />
             <Pressable
@@ -517,6 +545,12 @@ export default function Stock() {
 }
 
 const s = StyleSheet.create({
+  stockTotals: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  stockTotalCard: { flex: 1, padding: 12 },
+  stockTotalHeading: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  stockTotalTitle: { flex: 1, fontSize: 13, fontWeight: '700', color: colors.ink },
+  stockTotalValue: { fontSize: 26, fontWeight: '800', color: colors.forest, marginTop: 10 },
+  stockTotalCaption: { fontSize: 12, color: colors.muted, marginTop: 1 },
   stockSearchRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   scanStockButton: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 12, borderRadius: radius.md, borderWidth: 1, borderColor: colors.forestTint, backgroundColor: colors.forestTint },
   scanStockText: { color: colors.forest, fontSize: 13, fontWeight: '700' },

@@ -22,6 +22,10 @@ const PERIOD_TITLE = {
   'Last month': 'Monthly sales report',
 };
 
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const WEEKDAYS_LONG = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
 function FlowRow({ label, value, sign, color, bold, icon }) {
   return (
     <View style={s.flow}>
@@ -41,9 +45,16 @@ function Mini({ label, value }) {
   );
 }
 
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function toDateInput(year, month, day) {
+  return `${year}-${pad2(month + 1)}-${pad2(day)}`;
+}
+
 function localDateInput(date = new Date()) {
-  const pad = (value) => String(value).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return toDateInput(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
 function localDateTimestamp(value) {
@@ -53,6 +64,86 @@ function localDateTimestamp(value) {
   const date = new Date(Number(year), Number(month) - 1, Number(day));
   if (date.getFullYear() !== Number(year) || date.getMonth() !== Number(month) - 1 || date.getDate() !== Number(day)) return null;
   return date.getTime();
+}
+
+function prettyDate(value) {
+  const ts = localDateTimestamp(value);
+  if (ts === null) return 'Pick a date';
+  const d = new Date(ts);
+  return `${WEEKDAYS_LONG[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+// Simple month calendar. Future days are disabled because a sale cannot be recorded in the future.
+function CalendarPicker({ value, onChange }) {
+  const selectedTs = localDateTimestamp(value);
+  const start = selectedTs !== null ? new Date(selectedTs) : new Date();
+  const [view, setView] = useState({ y: start.getFullYear(), m: start.getMonth() });
+
+  const now = new Date();
+  const todayTs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const nextDisabled = view.y > now.getFullYear() || (view.y === now.getFullYear() && view.m >= now.getMonth());
+
+  const firstOffset = (new Date(view.y, view.m, 1).getDay() + 6) % 7; // week starts on Monday
+  const daysInMonth = new Date(view.y, view.m + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < firstOffset; i += 1) cells.push(null);
+  for (let day = 1; day <= daysInMonth; day += 1) cells.push(day);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+
+  function shift(delta) {
+    setView((current) => {
+      const d = new Date(current.y, current.m + delta, 1);
+      return { y: d.getFullYear(), m: d.getMonth() };
+    });
+  }
+
+  return (
+    <View style={s.cal}>
+      <View style={s.calHead}>
+        <Pressable onPress={() => shift(-1)} hitSlop={10} style={s.calNav}>
+          <Ionicons name="chevron-back" size={20} color={colors.ink} />
+        </Pressable>
+        <Text style={s.calTitle}>{MONTHS[view.m]} {view.y}</Text>
+        <Pressable onPress={() => shift(1)} disabled={nextDisabled} hitSlop={10} style={[s.calNav, nextDisabled && { opacity: 0.3 }]}>
+          <Ionicons name="chevron-forward" size={20} color={colors.ink} />
+        </Pressable>
+      </View>
+
+      <View style={s.calRow}>
+        {WEEKDAYS.map((w) => <Text key={w} style={s.calWeekday}>{w}</Text>)}
+      </View>
+
+      {weeks.map((week, wi) => (
+        <View key={wi} style={s.calRow}>
+          {week.map((day, di) => {
+            if (day === null) return <View key={di} style={s.calCell} />;
+            const ts = new Date(view.y, view.m, day).getTime();
+            const disabled = ts > todayTs;
+            const selected = ts === selectedTs;
+            const isToday = ts === todayTs;
+            return (
+              <View key={di} style={s.calCell}>
+                <Pressable
+                  disabled={disabled}
+                  onPress={() => onChange(toDateInput(view.y, view.m, day))}
+                  style={({ pressed }) => [
+                    s.calDay,
+                    isToday && !selected && s.calDayToday,
+                    selected && s.calDaySelected,
+                    pressed && !selected && { backgroundColor: colors.goldTint },
+                  ]}
+                >
+                  <Text style={[s.calDayText, disabled && s.calDayTextDisabled, selected && s.calDayTextSelected]}>{day}</Text>
+                </Pressable>
+              </View>
+            );
+          })}
+        </View>
+      ))}
+    </View>
+  );
 }
 
 export default function Reports() {
@@ -91,6 +182,7 @@ export default function Reports() {
   const [manualPaid, setManualPaid] = useState('0');
   const [manualMethod, setManualMethod] = useState('Cash');
   const [manualDate, setManualDate] = useState(localDateInput());
+  const [manualCalOpen, setManualCalOpen] = useState(false);
   const [receiptBusyId, setReceiptBusyId] = useState(null);
 
   const activeKey = presetFor(range.from, range.to);
@@ -164,6 +256,8 @@ export default function Reports() {
       const [products, customers] = await Promise.all([getProducts(), getCustomers()]);
       setManualProducts(products);
       setManualCustomers(customers);
+      setManualDate(localDateInput());
+      setManualCalOpen(false);
       setManualOpen(true);
     } catch (e) {
       Alert.alert('Cannot open manual sale', e.message);
@@ -186,6 +280,9 @@ export default function Reports() {
   );
   const selectedManualCustomer = manualCustomers.find((customer) => customer.id === manualCustomerId);
 
+  const todayInput = localDateInput();
+  const yesterdayInput = (() => { const y = new Date(); y.setDate(y.getDate() - 1); return localDateInput(y); })();
+
   function changeManualQty(productId, delta) {
     setManualCart((current) => ({ ...current, [productId]: Math.max(0, (current[productId] || 0) + delta) }));
   }
@@ -207,7 +304,7 @@ export default function Reports() {
     }
     const createdAt = localDateTimestamp(manualDate);
     if (createdAt === null || createdAt > Date.now()) {
-      Alert.alert('Invalid sale date', 'Enter a valid date in YYYY-MM-DD format that is not in the future.');
+      Alert.alert('Invalid sale date', 'Pick a valid date that is not in the future.');
       return;
     }
 
@@ -235,6 +332,7 @@ export default function Reports() {
       setManualPaid('0');
       setManualMethod('Cash');
       setManualDate(localDateInput());
+      setManualCalOpen(false);
       setManualSearch('');
       setManualCustomerSearch('');
       setRange({ from: createdAt, to: createdAt });
@@ -502,14 +600,40 @@ export default function Reports() {
       />
 
       <KeyboardSheet visible={manualOpen} title="Record sale manually" onClose={() => setManualOpen(false)} tall>
-        <Field
-          label="Sale date (YYYY-MM-DD)"
-          value={manualDate}
-          onChangeText={setManualDate}
-          placeholder="2026-10-31"
-          autoCapitalize="none"
-        />
-        <Text style={s.cap}>Customer</Text>
+        <Text style={s.cap}>Sale date</Text>
+        <View style={s.dateQuickRow}>
+          <Chip
+            label="Today"
+            active={manualDate === todayInput}
+            onPress={() => { setManualDate(todayInput); setManualCalOpen(false); }}
+          />
+          <Chip
+            label="Yesterday"
+            active={manualDate === yesterdayInput}
+            onPress={() => { setManualDate(yesterdayInput); setManualCalOpen(false); }}
+          />
+        </View>
+        <Pressable
+          onPress={() => { Keyboard.dismiss(); setManualCalOpen((v) => !v); }}
+          style={({ pressed }) => [s.dateBtn, manualCalOpen && s.dateBtnOpen, pressed && { opacity: 0.85 }]}
+        >
+          <View style={s.dateIcon}>
+            <Ionicons name="calendar" size={18} color={colors.forestDark} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.dateBtnLabel}>Selected day</Text>
+            <Text style={s.dateBtnValue}>{prettyDate(manualDate)}</Text>
+          </View>
+          <Ionicons name={manualCalOpen ? 'chevron-up' : 'chevron-down'} size={18} color={colors.muted} />
+        </Pressable>
+        {manualCalOpen ? (
+          <CalendarPicker
+            value={manualDate}
+            onChange={(v) => { setManualDate(v); setManualCalOpen(false); }}
+          />
+        ) : null}
+
+        <Text style={[s.cap, { marginTop: 16 }]}>Customer</Text>
         <Chip label={manualCustomerId ? 'Clear customer' : 'Walk-in sale'} active={!manualCustomerId} onPress={() => setManualCustomerId('')} />
         {selectedManualCustomer ? <Text style={s.manualHint}>Selected: {selectedManualCustomer.name}</Text> : null}
         <Field
@@ -574,7 +698,7 @@ export default function Reports() {
         <Btn
           icon="checkmark-circle"
           title={manualSaving ? 'Recording…' : `Record sale · ${fcfa(manualTotal)}`}
-          onPress={saveManualSale}
+          onPress={() => saveManualSale(false)}
           disabled={manualSaving || manualLines.length === 0 || parseAmount(manualPaid) > manualTotal}
         />
       </KeyboardSheet>
@@ -654,6 +778,37 @@ const s = StyleSheet.create({
   manualHint: { color: colors.muted, fontSize: 12, marginTop: 3 },
   manualQty: { minWidth: 22, textAlign: 'center', color: colors.ink, fontWeight: '800' },
   manualSelectedLine: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 8 },
+
+  // Date picker (manual sale)
+  dateQuickRow: { flexDirection: 'row', marginBottom: 10 },
+  dateBtn: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 14,
+    borderWidth: 1, borderColor: colors.line, paddingHorizontal: 12, paddingVertical: 11,
+  },
+  dateBtnOpen: { borderColor: colors.gold },
+  dateIcon: {
+    width: 36, height: 36, borderRadius: 18, backgroundColor: colors.goldTint,
+    alignItems: 'center', justifyContent: 'center', marginRight: 12,
+  },
+  dateBtnLabel: { fontSize: 11, color: colors.muted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
+  dateBtnValue: { fontSize: 16, color: colors.ink, fontWeight: '800', marginTop: 2 },
+
+  cal: {
+    marginTop: 10, backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: colors.line,
+    paddingHorizontal: 8, paddingVertical: 10,
+  },
+  calHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, marginBottom: 8 },
+  calNav: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F4F1E8', alignItems: 'center', justifyContent: 'center' },
+  calTitle: { fontSize: 16, fontWeight: '800', color: colors.ink },
+  calRow: { flexDirection: 'row' },
+  calWeekday: { flex: 1, textAlign: 'center', fontSize: 11, fontWeight: '700', color: colors.muted, paddingVertical: 6 },
+  calCell: { flex: 1, aspectRatio: 1, alignItems: 'center', justifyContent: 'center', padding: 2 },
+  calDay: { width: '100%', height: '100%', borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
+  calDayToday: { borderWidth: 1.5, borderColor: colors.gold },
+  calDaySelected: { backgroundColor: colors.gold },
+  calDayText: { fontSize: 15, fontWeight: '700', color: colors.ink },
+  calDayTextDisabled: { color: colors.muted, opacity: 0.35 },
+  calDayTextSelected: { color: colors.forestDark, fontWeight: '900' },
 
   cap: { fontSize: 12, fontWeight: '800', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 12 },
   split: { flexDirection: 'row', height: 14, borderRadius: 7, overflow: 'hidden', backgroundColor: '#EFEBE0' },

@@ -2,9 +2,7 @@ npm install -g eas-cli
 eas --version
 eas login
 
-eas build:configure
-
-eas build --platform android --profile preview
+eas build:configureonte
 
 # Manu's Resto Manager (MVP)
 

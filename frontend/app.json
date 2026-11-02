@@ -2,7 +2,7 @@
   "expo": {
     "name": "Manu's Resto Manager",
     "slug": "manus-resto-manager",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "orientation": "portrait",
     "scheme": "manusresto",
     "icon": "./public/bglogo.png",
@@ -39,7 +39,7 @@
     ],
     "android": {
       "package": "com.manusresto.manager",
-      "versionCode": 28,
+      "versionCode": 32,
       "adaptiveIcon": {
         "foregroundImage": "./public/nobglogo.png",
         "backgroundColor": "#0B3827"

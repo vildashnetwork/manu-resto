@@ -106,6 +106,7 @@ const settingSchema = new Schema({
     lowStock: { type: Boolean, default: true },
     creditDebt: { type: Boolean, default: true },
     expenses: { type: Boolean, default: true },
+    dailySummary: { type: Boolean, default: true },
   },
 }, options);
 

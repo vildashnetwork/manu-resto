@@ -107,6 +107,13 @@ const settingSchema = new Schema({
     creditDebt: { type: Boolean, default: true },
     expenses: { type: Boolean, default: true },
     dailySummary: { type: Boolean, default: true },
+    urgentDebt: { type: Boolean, default: true },
+    outOfStock: { type: Boolean, default: true },
+  },
+  notificationState: {
+    urgentDebtLastSentAt: { type: Number, default: 0 },
+    outOfStockLastSentAt: { type: Number, default: 0 },
+    dailySummaryLastSentKey: { type: String, default: '' },
   },
 }, options);
 

@@ -11,10 +11,12 @@ import {
   Setting,
   StockMovement,
 } from './models.js';
-import { notifyAdmin } from './email.js';
+import { notifyAdmin, notifyUrgentAdmin, sendTestEmail } from './email.js';
 
 const router = Router();
 const METHODS = ['Cash', 'MTN MoMo', 'Xcash', 'Orange Money', 'Bank transfer'];
+const NOTIFICATION_PREFERENCES = ['lowStock', 'creditDebt', 'expenses', 'dailySummary', 'urgentDebt', 'outOfStock'];
+let lastTestEmailAt = 0;
 const now = () => Date.now();
 
 function httpError(status, message, code, details) {
@@ -74,7 +76,15 @@ function serializeSale(sale) {
 function serializeSetting(setting) {
   return {
     adminEmail: setting.adminEmail,
-    notifications: setting.notifications,
+    notifications: {
+      lowStock: true,
+      creditDebt: true,
+      expenses: true,
+      dailySummary: true,
+      urgentDebt: true,
+      outOfStock: true,
+      ...setting.notifications,
+    },
     senderEmail: process.env.BREVO_SENDER_EMAIL || '',
     senderConfigured: Boolean(process.env.BREVO_API_KEY && process.env.BREVO_SENDER_EMAIL),
   };
@@ -119,16 +129,35 @@ router.put('/settings', asyncRoute(async (req, res) => {
   if (!notifications || typeof notifications !== 'object' || Array.isArray(notifications)) {
     throw httpError(400, 'Notification preferences are required.');
   }
-  for (const key of ['lowStock', 'creditDebt', 'expenses']) {
-    if (typeof notifications[key] !== 'boolean') throw httpError(400, `Invalid ${key} notification preference.`);
+  const updates = { adminEmail: normalizedEmail };
+  for (const [key, value] of Object.entries(notifications)) {
+    if (!NOTIFICATION_PREFERENCES.includes(key)) throw httpError(400, `Unknown ${key} notification preference.`);
+    if (typeof value !== 'boolean') throw httpError(400, `Invalid ${key} notification preference.`);
+    updates[`notifications.${key}`] = value;
   }
 
   const setting = await Setting.findByIdAndUpdate(
     'main',
-    { $set: { adminEmail: normalizedEmail, notifications } },
+    { $set: updates },
     { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
   );
   res.json({ settings: serializeSetting(setting) });
+}));
+
+router.post('/settings/test-email', asyncRoute(async (req, res) => {
+  const cooldownMs = 60 * 1000;
+  const timeRemaining = cooldownMs - (Date.now() - lastTestEmailAt);
+  if (timeRemaining > 0) {
+    throw httpError(429, `Please wait ${Math.ceil(timeRemaining / 1000)} seconds before sending another test email.`);
+  }
+  lastTestEmailAt = Date.now();
+  try {
+    const recipient = await sendTestEmail();
+    res.json({ sent: true, recipient });
+  } catch (error) {
+    lastTestEmailAt = 0;
+    throw httpError(502, error.message || 'The test email could not be sent.');
+  }
 }));
 
 router.get('/products', asyncRoute(async (req, res) => {
@@ -180,6 +209,9 @@ router.post('/products', asyncRoute(async (req, res) => {
   if (product.tracked && product.lowStockThreshold > 0 && product.stock <= product.lowStockThreshold) {
     void notifyAdmin('lowStock', 'Low stock alert', `${product.name} has ${product.stock} ${product.unit || 'units'} remaining (threshold: ${product.lowStockThreshold}).`);
   }
+  if (product.tracked && product.stock <= 0) {
+    void notifyUrgentAdmin('outOfStock', 'Urgent · product out of stock', `${product.name} has run out of stock.`);
+  }
   res.status(201).json({ product: serializeProduct(product) });
 }));
 
@@ -227,6 +259,9 @@ router.put('/products/:id', asyncRoute(async (req, res) => {
   if (wasAboveThreshold && isAtOrBelowThreshold) {
     void notifyAdmin('lowStock', 'Low stock alert', `${product.name} has ${product.stock} ${product.unit || 'units'} remaining (threshold: ${product.lowStockThreshold}).`);
   }
+  if (previous.tracked && previous.stock > 0 && product.tracked && product.stock <= 0) {
+    void notifyUrgentAdmin('outOfStock', 'Urgent · product out of stock', `${product.name} has run out of stock.`);
+  }
   res.json({ product: serializeProduct(product) });
 }));
 
@@ -263,10 +298,14 @@ router.post('/stock/movements', asyncRoute(async (req, res) => {
     return {
       product: updated,
       becameLow: before.lowStockThreshold > 0 && before.stock > before.lowStockThreshold && updated.stock <= updated.lowStockThreshold,
+      becameEmpty: before.stock > 0 && updated.stock <= 0,
     };
   });
   if (result.becameLow) {
     void notifyAdmin('lowStock', 'Low stock alert', `${result.product.name} has ${result.product.stock} ${result.product.unit || 'units'} remaining (threshold: ${result.product.lowStockThreshold}).`);
+  }
+  if (result.becameEmpty) {
+    void notifyUrgentAdmin('outOfStock', 'Urgent · product out of stock', `${result.product.name} has run out of stock.`);
   }
   res.status(201).json({ product: serializeProduct(result.product) });
 }));
@@ -321,15 +360,17 @@ router.put('/customers/:id', asyncRoute(async (req, res) => {
     throw httpError(400, 'Opening debt must be a non-negative whole number or omitted.');
   }
 
-  const customer = await withTransaction(async (session) => {
+  const result = await withTransaction(async (session) => {
     const current = await Customer.findOne({ _id: req.params.id, active: true }).session(session);
     if (!current) throw httpError(404, 'Customer not found.');
     if (typeof name === 'string' && name.trim()) current.name = name.trim();
     if (typeof phone === 'string') current.phone = phone.trim() || null;
     if (typeof code === 'string') current.code = code.trim() || null;
     if (typeof creditLimit !== 'undefined') current.creditLimit = creditLimit || 0;
+    let debtIncreased = false;
     if (typeof openingDebt !== 'undefined') {
       const debtChange = (openingDebt || 0) - current.balance;
+      debtIncreased = debtChange > 0;
       current.balance = openingDebt || 0;
       if (debtChange !== 0) {
         await Ledger.create([{
@@ -343,9 +384,12 @@ router.put('/customers/:id', asyncRoute(async (req, res) => {
     }
     if (typeof notes === 'string') current.notes = notes.trim() || null;
     await current.save({ session });
-    return current;
+    return { customer: current, debtIncreased };
   });
-  res.json({ customer: serializeCustomer(customer) });
+  if (result.debtIncreased) {
+    void notifyAdmin('creditDebt', 'Customer debt increased', `${result.customer.name}'s recorded debt is now FCFA ${result.customer.balance.toLocaleString()}.`);
+  }
+  res.json({ customer: serializeCustomer(result.customer) });
 }));
 
 router.delete('/customers/:id', asyncRoute(async (req, res) => {
@@ -488,6 +532,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
       }
 
       const lowStockAlerts = [];
+      const outOfStockAlerts = [];
       for (const [productId, product] of productById) {
         if (!product.tracked) continue;
         const quantity = saleItems
@@ -500,6 +545,9 @@ router.post('/sales', asyncRoute(async (req, res) => {
         );
         if (updated.modifiedCount !== 1) throw httpError(409, `Not enough stock for ${product.name}.`);
         const remaining = product.stock - quantity;
+        if (product.stock > 0 && remaining <= 0) {
+          outOfStockAlerts.push(product.name);
+        }
         if (product.lowStockThreshold > 0 && product.stock > product.lowStockThreshold && remaining <= product.lowStockThreshold) {
           lowStockAlerts.push({ name: product.name, unit: product.unit, stock: remaining, threshold: product.lowStockThreshold });
         }
@@ -554,6 +602,7 @@ router.post('/sales', asyncRoute(async (req, res) => {
       return {
         sale: created,
         lowStockAlerts,
+        outOfStockAlerts,
         debtAlert: credit > 0
           ? { customerName: customer.name, credit, balance: customer.balance + credit }
           : null,
@@ -561,6 +610,9 @@ router.post('/sales', asyncRoute(async (req, res) => {
     });
     for (const item of result.lowStockAlerts) {
       void notifyAdmin('lowStock', 'Low stock alert', `${item.name} has ${item.stock} ${item.unit || 'units'} remaining (threshold: ${item.threshold}).`);
+    }
+    if (result.outOfStockAlerts.length) {
+      void notifyUrgentAdmin('outOfStock', 'Urgent · product out of stock', `${result.outOfStockAlerts.join(', ')} ${result.outOfStockAlerts.length === 1 ? 'has' : 'have'} run out of stock.`);
     }
     if (result.debtAlert) {
       const { customerName: name, credit, balance } = result.debtAlert;

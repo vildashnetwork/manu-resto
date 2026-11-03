@@ -7,9 +7,10 @@ Express and MongoDB backend for the Expo frontend in `../frontend`.
 1. Install dependencies: `npm install`
 2. Keep the existing `backend/.env` and set `MONGOURI` to the MongoDB connection string.
 3. Set `CORS_ORIGIN` to the frontend origin(s), comma-separated. Expo development commonly uses `http://localhost:8081`.
-4. Set `BREVO_API_KEY` to a rotated Brevo API key and `BREVO_SENDER_EMAIL` to a sender verified in Brevo.
-5. Start the server with `npm run dev` (or `npm start`).
-6. Check `http://localhost:3000/api/health`.
+4. Set `BREVO_API_KEY` to a Brevo API key and `BREVO_SENDER_EMAIL` to a sender verified in Brevo.
+5. Set `NOTIFICATION_TIME_ZONE` to an IANA time zone (default `Africa/Douala`).
+6. Start the server with `npm run dev` (or `npm start`).
+7. Check `http://localhost:3000/api/health`.
 
 The frontend currently uses `https://manu-ltx7.onrender.com/api`. For local development set `EXPO_PUBLIC_API_URL=http://localhost:3000/api` in the frontend environment.
 
@@ -47,11 +48,14 @@ The uploader uses `API_BASE_URL` or defaults to `https://manu-ltx7.onrender.com/
 - `POST|GET /api/sales`, `POST /api/sales/:id/cancel`, `PUT /api/sales/:id/payment`
 - `POST /api/expenses`
 - `GET|PUT /api/settings` (admin notification email and notification preferences)
+- `POST /api/settings/test-email` (sends a test email to the saved admin recipient; one-minute cooldown)
 - `GET /api/reports`
 
 Sale and repayment writes use MongoDB transactions. Use a MongoDB replica set or Atlas deployment that supports transactions. Product images are uploaded by the frontend to Cloudinary; this API stores the secure image URL, not the image file.
 
-Email notification preferences are stored in the MongoDB `settings` collection. When enabled, Brevo sends email after a tracked product crosses its low-stock threshold, customer debt increases from a credit sale or opening balance, or an expense is recorded. Configure Brevo only with backend environment variables; never put the API key in the frontend.
+Email notification preferences and the recipient are stored in the MongoDB `settings` collection. When enabled, Brevo sends scheduled business summaries daily at 07:00, 09:00, 12:00, and 19:00 in `NOTIFICATION_TIME_ZONE`. Summaries include sales, payments, customer debt, stock, and expenses. Urgent high-debt alerts (FCFA 100,000 or more) and out-of-stock reminders are checked every five minutes and repeated no more than once every six hours while the condition persists. Event-based low-stock, debt-increase, and out-of-stock alerts are also sent after the corresponding action succeeds. Configure Brevo only with backend environment variables; never put the API key in the frontend.
+
+On Render, add `BREVO_API_KEY`, `BREVO_SENDER_EMAIL` (verified in Brevo), and `NOTIFICATION_TIME_ZONE` in the service environment, then deploy the backend. In the app Settings screen, save the recipient email and enabled alert preferences, then use **Send test email** to verify delivery. Check Render logs for Brevo rejection details if the test fails. The scheduler runs in the API process, so keep a single API instance/process to avoid duplicate scheduled summaries and urgent reminders.
 
 Sales accept an optional per-line `unitPrice` and a `customerName` for named walk-in receipts. Payment adjustments reverse the prior sale-payment entries and record the corrected payment in a transaction, updating the customer ledger and balance when credit changes. Deploy backend changes before using barcode fields, discounted sale prices, or payment adjustments with the hosted API.
 

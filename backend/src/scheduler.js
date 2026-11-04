@@ -4,7 +4,6 @@ import { notifyAdmin, notifyUrgentAdmin } from './email.js';
 
 export const NOTIFICATION_TIME_ZONE = process.env.NOTIFICATION_TIME_ZONE || 'Africa/Douala';
 
-const URGENT_DEBT_THRESHOLD = 100_000;
 const SCHEDULER_INTERVAL = 30 * 1000;
 
 const formatterCache = new Map();
@@ -102,6 +101,25 @@ export function getDueSummaryKey(date = new Date(), timeZone = NOTIFICATION_TIME
 
 function formatAmount(amount) {
   return `FCFA ${amount.toLocaleString('en-US')}`;
+}
+
+export function createDebtReminderMessage(customers) {
+  const debtors = customers
+    .filter((customer) => customer.balance > 0)
+    .sort((a, b) => b.balance - a.balance);
+  if (!debtors.length) return null;
+
+  const outstandingDebt = debtors.reduce((sum, customer) => sum + customer.balance, 0);
+  const message = [
+    `Outstanding customer debt is ${formatAmount(outstandingDebt)} across ${debtors.length} customer${debtors.length === 1 ? '' : 's'}.`,
+    'This reminder will be sent hourly while any customer balance remains unpaid.',
+    '',
+    ...debtors.slice(0, 20).map((customer) => `• ${customer.name}: ${formatAmount(customer.balance)}`),
+  ];
+  if (debtors.length > 20) {
+    message.push('', `Showing the 20 largest balances of ${debtors.length} customers.`);
+  }
+  return message.join('\n');
 }
 
 function formatDate(date, timeZone) {
@@ -216,16 +234,9 @@ async function sendUrgentDebtNotification(now = Date.now()) {
     .select('name balance')
     .sort({ balance: -1 })
     .lean();
-  const outstandingDebt = customers.reduce((sum, customer) => sum + customer.balance, 0);
-  if (outstandingDebt < URGENT_DEBT_THRESHOLD) return false;
-
-  const message = [
-    `Outstanding customer debt is ${formatAmount(outstandingDebt)} (urgent threshold: ${formatAmount(URGENT_DEBT_THRESHOLD)}).`,
-    `Customers owing: ${customers.length}.`,
-    '',
-    ...customers.slice(0, 10).map((customer) => `• ${customer.name}: ${formatAmount(customer.balance)}`),
-  ].join('\n');
-  return notifyUrgentAdmin('urgentDebt', 'Urgent · customer debt is high', message, now);
+  const message = createDebtReminderMessage(customers);
+  if (!message) return false;
+  return notifyUrgentAdmin('urgentDebt', 'Hourly reminder · outstanding customer debt', message, now);
 }
 
 async function sendOutOfStockNotification(now = Date.now()) {

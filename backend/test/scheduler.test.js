@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getDueSummaryKey, getReportRanges, getScheduledSummaryKey } from '../src/scheduler.js';
+import {
+  createDebtReminderMessage,
+  getDueSummaryKey,
+  getReportRanges,
+  getScheduledSummaryKey,
+} from '../src/scheduler.js';
 import { URGENT_REMINDER_INTERVAL } from '../src/email.js';
 
 const douala = 'Africa/Douala';
@@ -38,6 +43,20 @@ test('scheduled summaries run at the top of every local hour', () => {
 
 test('urgent reminders repeat hourly while the urgent condition persists', () => {
   assert.equal(URGENT_REMINDER_INTERVAL, 60 * 60 * 1000);
+});
+
+test('debt reminders include any positive balance without a minimum threshold', () => {
+  const message = createDebtReminderMessage([
+    { name: 'Small balance customer', balance: 500 },
+    { name: 'Settled customer', balance: 0 },
+  ]);
+  assert.match(message, /FCFA 500/);
+  assert.match(message, /Small balance customer/);
+  assert.doesNotMatch(message, /threshold/i);
+});
+
+test('debt reminders are omitted when all customer balances are settled', () => {
+  assert.equal(createDebtReminderMessage([{ name: 'Settled customer', balance: 0 }]), null);
 });
 
 test('report date bounds use numeric UTC milliseconds for local calendar days', () => {

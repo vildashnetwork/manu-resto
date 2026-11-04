@@ -18,7 +18,7 @@ const NOTIFICATION_OPTIONS = [
   { key: 'creditDebt', title: 'Customer debt increases', detail: 'Email when a credit sale or opening balance adds to debt.' },
   { key: 'expenses', title: 'Expenses recorded', detail: 'Email when a new expense is entered.' },
   { key: 'dailySummary', title: 'Hourly business summaries', detail: 'Email sales, customer debt, stock, and expenses every hour, all day.' },
-  { key: 'urgentDebt', title: 'Urgent high-debt alerts', detail: 'Email when total debt reaches FCFA 100,000, then remind every hour while it stays high.' },
+  { key: 'urgentDebt', title: 'Hourly customer debt reminders', detail: 'Send an immediate reminder when the backend starts, then email every hour while any customer still owes money.' },
   { key: 'outOfStock', title: 'Urgent out-of-stock alerts', detail: 'Email when tracked products run out, then remind every hour while any remain out.' },
 ];
 

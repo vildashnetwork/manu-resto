@@ -2,7 +2,7 @@ import { Setting } from './models.js';
 
 const BREVO_URL = 'https://api.brevo.com/v3/smtp/email';
 const RETRY_DELAYS = [500, 1500];
-export const URGENT_REMINDER_INTERVAL = 6 * 60 * 60 * 1000;
+export const URGENT_REMINDER_INTERVAL = 60 * 60 * 1000;
 
 const EMAIL_THEMES = {
   urgentDebt: { accent: '#B3402F', tint: '#F8E5E1', label: 'Urgent debt alert' },

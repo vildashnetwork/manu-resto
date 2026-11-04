@@ -2,7 +2,6 @@ import 'dotenv/config';
 import { Customer, Expense, Payment, Product, Sale, Setting } from './models.js';
 import { notifyAdmin, notifyUrgentAdmin } from './email.js';
 
-export const NOTIFICATION_TIMES = ['07:00', '09:00', '12:00', '19:00'];
 export const NOTIFICATION_TIME_ZONE = process.env.NOTIFICATION_TIME_ZONE || 'Africa/Douala';
 
 const URGENT_DEBT_THRESHOLD = 100_000;
@@ -91,20 +90,14 @@ export function getReportRanges(date = new Date(), timeZone = NOTIFICATION_TIME_
 
 export function getScheduledSummaryKey(date = new Date(), timeZone = NOTIFICATION_TIME_ZONE) {
   const parts = getZonedDateParts(date, timeZone);
-  const time = `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`;
-  if (!NOTIFICATION_TIMES.includes(time)) return null;
-  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')} ${time}`;
+  if (parts.minute !== 0) return null;
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')} ${String(parts.hour).padStart(2, '0')}:00`;
 }
 
 export function getDueSummaryKey(date = new Date(), timeZone = NOTIFICATION_TIME_ZONE) {
   const parts = getZonedDateParts(date, timeZone);
-  const minutesNow = parts.hour * 60 + parts.minute;
-  const dueTime = [...NOTIFICATION_TIMES].reverse().find((time) => {
-    const [hour, minute] = time.split(':').map(Number);
-    return hour * 60 + minute <= minutesNow && minutesNow - (hour * 60 + minute) <= 5;
-  });
-  if (!dueTime) return null;
-  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')} ${dueTime}`;
+  if (parts.minute > 5) return null;
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')} ${String(parts.hour).padStart(2, '0')}:00`;
 }
 
 function formatAmount(amount) {
@@ -297,7 +290,7 @@ export function startNotificationScheduler() {
   if (schedulerInterval) return schedulerInterval;
 
   console.info(`Notification scheduler started · ${NOTIFICATION_TIME_ZONE}`);
-  console.info(`Daily email summaries: ${NOTIFICATION_TIMES.join(', ')}`);
+  console.info(`Business summary emails: every hour at :00 (${NOTIFICATION_TIME_ZONE})`);
   void checkAndSend();
   schedulerInterval = setInterval(() => void checkAndSend(), SCHEDULER_INTERVAL);
   return schedulerInterval;

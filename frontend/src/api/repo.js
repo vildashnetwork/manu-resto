@@ -140,6 +140,10 @@ export async function updateSettings(settings) {
   return entity(await put('/settings', settings), 'settings');
 }
 
+export async function sendTestEmail() {
+  return entity(await post('/settings/test-email', {}), 'test email');
+}
+
 export async function getCustomer(id) {
   return normalizeCustomer(entity(await get(`/customers/${encodeURIComponent(id)}`), 'customer'));
 }

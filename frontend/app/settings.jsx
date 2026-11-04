@@ -1,28 +1,41 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Btn, Card, Field, Hero, ScreenShimmer, useLoad, screenStyle } from '../src/components/ui';
-import { getSettings, updateSettings } from '../src/api/repo';
+import { getSettings, sendTestEmail, updateSettings } from '../src/api/repo';
 import { colors, radius } from '../src/theme';
 
-const DEFAULT_NOTIFICATIONS = { lowStock: true, creditDebt: true, expenses: true };
+const DEFAULT_NOTIFICATIONS = {
+  lowStock: true,
+  creditDebt: true,
+  expenses: true,
+  dailySummary: true,
+  urgentDebt: true,
+  outOfStock: true,
+};
 
 const NOTIFICATION_OPTIONS = [
   { key: 'lowStock', title: 'Low stock alerts', detail: 'Email when tracked stock reaches its configured threshold.' },
   { key: 'creditDebt', title: 'Customer debt increases', detail: 'Email when a credit sale or opening balance adds to debt.' },
   { key: 'expenses', title: 'Expenses recorded', detail: 'Email when a new expense is entered.' },
+  { key: 'dailySummary', title: 'Hourly business summaries', detail: 'Email sales, customer debt, stock, and expenses every hour, all day.' },
+  { key: 'urgentDebt', title: 'Urgent high-debt alerts', detail: 'Email when total debt reaches FCFA 100,000, then remind every hour while it stays high.' },
+  { key: 'outOfStock', title: 'Urgent out-of-stock alerts', detail: 'Email when tracked products run out, then remind every hour while any remain out.' },
 ];
 
 export default function Settings() {
   const [loaded, , loading] = useLoad(getSettings);
   const [email, setEmail] = useState('');
+  const [savedEmail, setSavedEmail] = useState('');
   const [notifications, setNotifications] = useState(DEFAULT_NOTIFICATIONS);
   const [senderEmail, setSenderEmail] = useState('');
   const [senderConfigured, setSenderConfigured] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [testingEmail, setTestingEmail] = useState(false);
 
   useEffect(() => {
     if (!loaded) return;
     setEmail(loaded.adminEmail || '');
+    setSavedEmail((loaded.adminEmail || '').trim().toLowerCase());
     setNotifications({ ...DEFAULT_NOTIFICATIONS, ...loaded.notifications });
     setSenderEmail(loaded.senderEmail || '');
     setSenderConfigured(Boolean(loaded.senderConfigured));
@@ -34,6 +47,7 @@ export default function Settings() {
     try {
       const saved = await updateSettings({ adminEmail: email.trim(), notifications });
       setEmail(saved.adminEmail || '');
+      setSavedEmail((saved.adminEmail || '').trim().toLowerCase());
       setNotifications({ ...DEFAULT_NOTIFICATIONS, ...saved.notifications });
       setSenderEmail(saved.senderEmail || '');
       setSenderConfigured(Boolean(saved.senderConfigured));
@@ -42,6 +56,19 @@ export default function Settings() {
       Alert.alert('Could not save settings', error.message || String(error));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function testEmail() {
+    if (testingEmail) return;
+    setTestingEmail(true);
+    try {
+      const result = await sendTestEmail();
+      Alert.alert('Test email sent', `Check ${result.recipient} for the test message.`);
+    } catch (error) {
+      Alert.alert('Test email failed', error.message || String(error));
+    } finally {
+      setTestingEmail(false);
     }
   }
 
@@ -73,11 +100,22 @@ export default function Settings() {
               {senderConfigured ? 'email is configured' : 'Set your email to get notifications.'}
             </Text>
           </View>
+          <Btn
+            title={testingEmail ? 'Sending test email…' : 'Send test email'}
+            icon="mail-outline"
+            variant="soft"
+            onPress={testEmail}
+            disabled={testingEmail || !email.trim() || email.trim().toLowerCase() !== savedEmail}
+            style={{ marginTop: 12 }}
+          />
+          {email.trim().toLowerCase() !== savedEmail && (
+            <Text style={s.description}>Save your updated email address before sending a test.</Text>
+          )}
         </Card>
 
         <Card style={{ marginTop: 14 }}>
           <Text style={s.sectionTitle}>Email notifications</Text>
-          <Text style={s.description}>Alerts are sent after the corresponding backend action succeeds.</Text>
+          <Text style={s.description}>Save your recipient email above. Business summaries are sent every hour, around the clock, in the backend notification time zone.</Text>
           {NOTIFICATION_OPTIONS.map((option, index) => (
             <View key={option.key} style={[s.option, index === NOTIFICATION_OPTIONS.length - 1 && s.optionLast]}>
               <View style={s.optionText}>

@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
-import { ScrollView, View, Text, Alert, Pressable, StyleSheet, Keyboard } from 'react-native';
+import { ScrollView, View, Text, Alert, Pressable, StyleSheet, Keyboard, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import {
   Hero, Card, Btn, Chip, Field, Row, Section, Segmented, Stat, IconDot, Pill, Money, Empty,
   useLoad, ScreenShimmer, screenStyle, body,
 } from '../../src/components/ui';
 import KeyboardSheet from '../../src/components/KeyboardSheet';
 import DateRangeSheet, { PRESETS, presetFor, rangeLabel, dayEnd } from '../../src/components/DateRangeSheet';
-import { getReport, getRecentSales, addExpense, cancelSale, updateSalePayment, getProducts, getCustomers, createSale } from '../../src/api/repo';
+import { getReport, getRecentSales, addExpense, updateExpense, cancelSale, updateSalePayment, getProducts, getCustomers, createSale } from '../../src/api/repo';
 import { getReportLogoDataUri, buildSalesReportHtml, buildSaleReceiptHtml, savePdf, printHtml, safeFilePart } from '../../src/reports/salesReportPdf';
+import { matchProduct, scanBookPages } from '../../src/api/scanBook';
 import { fcfa, num, parseAmount, fmtDateTime, uid } from '../../src/utils';
 import { colors, radius, METHODS, METHOD_ICONS, METHOD_COLORS, EXPENSE_CATEGORIES } from '../../src/theme';
 
@@ -71,6 +73,35 @@ function prettyDate(value) {
   if (ts === null) return 'Pick a date';
   const d = new Date(ts);
   return `${WEEKDAYS_LONG[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function plainText(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Validates one sale read from the book against the product list and returns it with its list of issues.
+// Scanned fields are checked before any sale is saved.
+function checkDraft(sale, products, customers) {
+  const issues = [];
+  const lines = (sale.lines || []).map((l) => {
+    const product = products.find((p) => p.id === l.productId) || matchProduct(l.text, products);
+    const qty = Number(l.qty) || 0;
+    const unitPrice = Number(l.unitPrice) || 0;
+    if (!product) issues.push(`Unknown product: "${l.text || '?'}"`);
+    if (!Number.isSafeInteger(qty) || qty <= 0) issues.push(`Bad quantity for ${l.text || 'a line'}`);
+    if (!Number.isSafeInteger(unitPrice) || unitPrice <= 0) issues.push(`Unit price needs checking for ${l.text || 'a line'}`);
+    return { ...l, product, qty, unitPrice };
+  });
+  const total = lines.reduce((sum, l) => sum + l.qty * l.unitPrice, 0);
+  const paid = Number(sale.paid) || 0;
+  const customer = customers.find((item) => item.id === sale.customerId) ||
+    customers.find((item) => plainText(item.name) === plainText(sale.customerText));
+  if (!lines.length) issues.push('No product lines');
+  if (!Number.isSafeInteger(total)) issues.push('Sale total is too large');
+  if (!Number.isSafeInteger(paid) || paid < 0) issues.push('Paid amount needs checking');
+  if (paid > total) issues.push('Paid is greater than the total');
+  if (paid < total && !customer) issues.push('Credit sale: customer not recognised');
+  return { ...sale, customerId: customer?.id || '', lines, total, paid, issues };
 }
 
 // Simple month calendar. Future days are disabled because a sale cannot be recorded in the future.
@@ -161,6 +192,7 @@ export default function Reports() {
   const [expMethod, setExpMethod] = useState('Cash');
   const [expAmt, setExpAmt] = useState('');
   const [expNote, setExpNote] = useState('');
+  const [editingExpense, setEditingExpense] = useState(null);
   const [cancelId, setCancelId] = useState(null);
   const [reason, setReason] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('All');
@@ -184,6 +216,13 @@ export default function Reports() {
   const [manualDate, setManualDate] = useState(localDateInput());
   const [manualCalOpen, setManualCalOpen] = useState(false);
   const [receiptBusyId, setReceiptBusyId] = useState(null);
+
+  // Scan the paper sales book
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanPages, setScanPages] = useState([]); // [{ uri }]
+  const [scanBusy, setScanBusy] = useState(false);
+  const [drafts, setDrafts] = useState(null); // null = still capturing pages, array = review step
+  const [scanSaving, setScanSaving] = useState(false);
 
   const activeKey = presetFor(range.from, range.to);
   const periodTitle = PERIOD_TITLE[activeKey] || 'Sales report';
@@ -216,9 +255,26 @@ export default function Reports() {
     Keyboard.dismiss();
     setBusy(true);
     try {
-      await addExpense({ category: expCat, amount: parseAmount(expAmt), method: expMethod, note: expNote });
-      setExpAmt(''); setExpNote(''); setExpOpen(false); reload();
-    } catch (e) { Alert.alert('Cannot save expense', e.message); } finally { setBusy(false); }
+      const expense = { category: expCat, amount: parseAmount(expAmt), method: expMethod, note: expNote };
+      if (editingExpense) await updateExpense(editingExpense.id, expense);
+      else await addExpense(expense);
+      setExpAmt(''); setExpNote(''); setExpOpen(false); setEditingExpense(null); reload();
+    } catch (e) { Alert.alert(editingExpense ? 'Cannot update expense' : 'Cannot save expense', e.message); } finally { setBusy(false); }
+  }
+
+  function editExpense(expense) {
+    setEditingExpense(expense);
+    setExpCat(expense.category);
+    setExpMethod(expense.method);
+    setExpAmt(String(expense.amount));
+    setExpNote(expense.note || '');
+    setExpOpen(true);
+  }
+
+  function closeExpenseEditor() {
+    if (busy) return;
+    setExpOpen(false);
+    setEditingExpense(null);
   }
 
   async function doCancel() {
@@ -249,7 +305,8 @@ export default function Reports() {
     } finally { setBusy(false); }
   }
 
-  async function openManualSale() {
+  // scan = true opens the "Scan book" sheet, otherwise the typed manual-sale form.
+  async function openManualSale(scan = false) {
     if (manualLoading) return;
     setManualLoading(true);
     try {
@@ -258,7 +315,13 @@ export default function Reports() {
       setManualCustomers(customers);
       setManualDate(localDateInput());
       setManualCalOpen(false);
-      setManualOpen(true);
+      if (scan) {
+        setScanPages([]);
+        setDrafts(null);
+        setScanOpen(true);
+      } else {
+        setManualOpen(true);
+      }
     } catch (e) {
       Alert.alert('Cannot open manual sale', e.message);
     } finally {
@@ -352,6 +415,143 @@ export default function Reports() {
     }
   }
 
+  // ---- Scan the paper sales book ----
+  async function addPages(fromCamera) {
+    const perm = fromCamera
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('Permission needed', 'Allow access to the camera or photos to scan the book.');
+      return;
+    }
+    const opts = { quality: 0.8, mediaTypes: ['images'], allowsMultipleSelection: !fromCamera };
+    const res = fromCamera
+      ? await ImagePicker.launchCameraAsync(opts)
+      : await ImagePicker.launchImageLibraryAsync(opts);
+    if (res.canceled) return;
+    try {
+      const added = await Promise.all(
+        res.assets.map((a) => ({ uri: a.uri }))
+      );
+      setScanPages((p) => [...p, ...added]);
+    } catch (e) {
+      Alert.alert('Cannot add page', e.message || String(e));
+    }
+  }
+
+  async function runScan() {
+    if (!scanPages.length || scanBusy) return;
+    setScanBusy(true);
+    try {
+      const sales = await scanBookPages({
+        pages: scanPages.map((p) => p.uri),
+        products: manualProducts,
+        customers: manualCustomers,
+        methods: METHODS,
+      });
+      if (!sales.length) {
+        Alert.alert('Nothing found', 'No sales could be read. Retake the photos flat, in good light, with the whole page visible.');
+        return;
+      }
+      setDrafts(sales.map((x, i) => ({
+        ...checkDraft(x, manualProducts, manualCustomers),
+        key: `d${i}`,
+        idempotencyKey: uid(),
+        include: true,
+      })));
+    } catch (e) {
+      Alert.alert('Cannot read the book', e.message || String(e));
+    } finally {
+      setScanBusy(false);
+    }
+  }
+
+  function toggleDraft(key) {
+    setDrafts((ds) => ds.map((x) => (x.key === key ? { ...x, include: !x.include } : x)));
+  }
+
+  function updateDraft(key, update) {
+    setDrafts((current) => current.map((sale) => {
+      if (sale.key !== key) return sale;
+      return { ...checkDraft({ ...sale, ...update }, manualProducts, manualCustomers), key: sale.key, include: sale.include };
+    }));
+  }
+
+  function updateDraftLine(key, lineIndex, update) {
+    const sale = drafts?.find((item) => item.key === key);
+    if (!sale) return;
+    updateDraft(key, {
+      lines: sale.lines.map((line, index) => index === lineIndex ? { ...line, ...update } : line),
+    });
+  }
+
+  function cancelScan() {
+    if (scanSaving) return;
+    setScanOpen(false);
+    setScanPages([]);
+    setDrafts(null);
+  }
+
+  async function saveScanned() {
+    const createdAt = localDateTimestamp(manualDate);
+    if (createdAt === null || createdAt > Date.now()) {
+      Alert.alert('Invalid sale date', 'Pick a valid date that is not in the future.');
+      return;
+    }
+    const todo = (drafts || []).filter((x) => x.include && x.issues.length === 0);
+    if (!todo.length || scanSaving) return;
+    if (stockShortages.length > 0) {
+      Alert.alert('Insufficient stock', 'Correct quantities or skip sales before saving.');
+      return;
+    }
+
+    Keyboard.dismiss();
+    setScanSaving(true);
+    const saved = new Set();
+    const failed = [];
+    for (const x of todo) {
+      try {
+        await createSale({
+          idempotencyKey: x.idempotencyKey,
+          items: x.lines.map((l) => ({
+            productId: l.product.id,
+            name: l.product.name,
+            unitPrice: l.unitPrice,
+            unitCost: l.product.cost,
+            qty: l.qty,
+            tracked: !!l.product.tracked,
+          })),
+          customerId: x.customerId || null,
+          payments: x.paid > 0 ? [{ method: METHODS.includes(x.method) ? x.method : 'Cash', amount: x.paid }] : [],
+          createdAt,
+          allowOverLimit: false,
+        });
+        saved.add(x.key);
+      } catch (e) {
+        failed.push(`Sale ${x.ref || ''}: ${e.code === 'CREDIT_LIMIT' ? 'customer credit limit exceeded' : e.message}`);
+      }
+    }
+    setScanSaving(false);
+
+    // Saved sales leave the list so they can never be saved twice.
+    const remaining = (drafts || []).filter((x) => !saved.has(x.key));
+    setDrafts(remaining);
+    if (saved.size) {
+      setRange({ from: createdAt, to: createdAt });
+      reload();
+    }
+    if (failed.length) {
+      Alert.alert(`${saved.size} saved, ${failed.length} failed`, failed.join('\n'));
+    } else if (remaining.every((x) => x.issues.length === 0 && !x.include) || remaining.length === 0) {
+      setScanOpen(false);
+      setScanPages([]);
+      setDrafts(null);
+      Alert.alert('Done', `${saved.size} sale(s) recorded.`);
+    } else {
+      Alert.alert('Saved', `${saved.size} sale(s) recorded. The rest need checking: record them with “Type it”.`);
+    }
+  }
+
   async function exportSaleReceipt(sale, action) {
     if (receiptBusyId) return;
     setReceiptBusyId(sale.id);
@@ -381,6 +581,21 @@ export default function Reports() {
   const maxMethod = Math.max(1, ...(r?.byMethod ?? []).map((m) => m.sales + m.repayments));
   const maxProduct = Math.max(1, ...(r?.topProducts ?? []).map((p) => p.qty));
   const paidShare = r && r.totalSales > 0 ? Math.round(((r.totalSales - r.creditSales) / r.totalSales) * 100) : 0;
+
+  const readyCount = (drafts ?? []).filter((x) => x.include && x.issues.length === 0).length;
+  const checkCount = (drafts ?? []).filter((x) => x.issues.length > 0).length;
+  const readyDrafts = (drafts ?? []).filter((x) => x.include && x.issues.length === 0);
+  const scanTotal = readyDrafts.reduce((sum, sale) => sum + sale.total, 0);
+  const scanPaid = readyDrafts.reduce((sum, sale) => sum + sale.paid, 0);
+  const scanStock = Object.values(readyDrafts.flatMap((sale) => sale.lines)
+    .filter((line) => line.product?.tracked)
+    .reduce((stock, line) => {
+      const current = stock[line.product.id] || { product: line.product, qty: 0 };
+      current.qty += line.qty;
+      stock[line.product.id] = current;
+      return stock;
+    }, {}));
+  const stockShortages = scanStock.filter(({ product, qty }) => Number(product.stock || 0) < qty);
 
   if (loading && !d) return <ScreenShimmer variant="reports" />;
 
@@ -423,16 +638,27 @@ export default function Reports() {
         <View style={body}>
           <Card style={{ marginBottom: 14 }}>
             <Text style={s.pdfTitle}>Sales entered after the fact?</Text>
-            <Text style={s.pdfSub}>Record a sale for a selected day, including products, customer, and amount paid.</Text>
-            <Btn
-              small
-              variant="gold"
-              icon="add-circle-outline"
-              title={manualLoading ? 'Loading…' : 'Record sale manually'}
-              onPress={openManualSale}
-              disabled={manualLoading}
-              style={{ marginTop: 12 }}
-            />
+            <Text style={s.pdfSub}>Scan the pages of your sales book, or record a sale by hand for a selected day.</Text>
+            <View style={s.pdfActions}>
+              <Btn
+                small
+                variant="gold"
+                icon="scan-outline"
+                title={manualLoading ? 'Loading…' : 'Scan book pages'}
+                onPress={() => openManualSale(true)}
+                disabled={manualLoading}
+                style={{ flex: 1 }}
+              />
+              <Btn
+                small
+                variant="soft"
+                icon="add-circle-outline"
+                title="Type it"
+                onPress={() => openManualSale(false)}
+                disabled={manualLoading}
+                style={{ flex: 1 }}
+              />
+            </View>
           </Card>
 
           <Card>
@@ -528,19 +754,37 @@ export default function Reports() {
             </Card>
           </Section>
 
-          <Section title="Expenses" action="+ Add expense" onAction={() => setExpOpen(true)}>
+          <Section title="Expenses" action="+ Add expense" onAction={() => {
+            setEditingExpense(null);
+            setExpCat('Supplies');
+            setExpMethod('Cash');
+            setExpAmt('');
+            setExpNote('');
+            setExpOpen(true);
+          }}>
             <Card style={{ paddingVertical: 4 }}>
               {r.expList.length === 0 && <Empty icon="receipt-outline" title="No expenses in this period" />}
               {r.expList.map((e, i) => (
-                <Row
-                  key={e.id}
-                  last={i === r.expList.length - 1}
-                  leading={<IconDot name="arrow-up" color={colors.danger} bg={colors.dangerTint} />}
-                  left={e.category}
-                  sub={`${fmtDateTime(e.created_at)} · ${e.method}${e.note ? ' · ' + e.note : ''}`}
-                  right={`−${fcfa(e.amount)}`}
-                  rightColor={colors.danger}
-                />
+                <View key={e.id} style={[s.expenseRow, i < r.expList.length - 1 && s.expenseDivider]}>
+                  <IconDot name="arrow-up" color={colors.danger} bg={colors.dangerTint} />
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={s.expenseName}>{e.category}</Text>
+                    <Text style={s.expenseSub}>{fmtDateTime(e.created_at)} · {e.method}{e.note ? ` · ${e.note}` : ''}</Text>
+                  </View>
+                  <View style={s.expenseActions}>
+                    <Text style={s.expenseAmount}>−{fcfa(e.amount)}</Text>
+                    <Pressable
+                      onPress={() => editExpense(e)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Edit ${e.category} expense`}
+                      hitSlop={8}
+                      style={s.expenseEdit}
+                    >
+                      <Ionicons name="create-outline" size={18} color={colors.forest} />
+                      <Text style={s.expenseEditText}>Edit</Text>
+                    </Pressable>
+                  </View>
+                </View>
               ))}
             </Card>
           </Section>
@@ -599,6 +843,213 @@ export default function Reports() {
         onApply={(a, b) => { setRange({ from: a, to: b }); setPickerOpen(false); }}
       />
 
+      {/* ---------- Scan the sales book ---------- */}
+      <KeyboardSheet visible={scanOpen} title="Scan sales book" onClose={cancelScan} tall>
+        <Text style={s.cap}>Sales were made on</Text>
+        <View style={s.dateQuickRow}>
+          <Chip
+            label="Today"
+            active={manualDate === todayInput}
+            onPress={() => { setManualDate(todayInput); setManualCalOpen(false); }}
+          />
+          <Chip
+            label="Yesterday"
+            active={manualDate === yesterdayInput}
+            onPress={() => { setManualDate(yesterdayInput); setManualCalOpen(false); }}
+          />
+        </View>
+        <Pressable
+          onPress={() => setManualCalOpen((v) => !v)}
+          style={({ pressed }) => [s.dateBtn, manualCalOpen && s.dateBtnOpen, pressed && { opacity: 0.85 }]}
+        >
+          <View style={s.dateIcon}>
+            <Ionicons name="calendar" size={18} color={colors.forestDark} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.dateBtnLabel}>Selected day</Text>
+            <Text style={s.dateBtnValue}>{prettyDate(manualDate)}</Text>
+          </View>
+          <Ionicons name={manualCalOpen ? 'chevron-up' : 'chevron-down'} size={18} color={colors.muted} />
+        </Pressable>
+        {manualCalOpen ? (
+          <CalendarPicker
+            value={manualDate}
+            onChange={(v) => { setManualDate(v); setManualCalOpen(false); }}
+          />
+        ) : null}
+
+        {!drafts ? (
+          <>
+            <Text style={[s.cap, { marginTop: 18 }]}>Book pages · {scanPages.length}</Text>
+            <Text style={s.manualHint}>
+              Take a clear photo of each page. The app reads the printed columns; check the results before saving.
+            </Text>
+            {scanPages.length === 0 ? (
+              <Text style={s.manualHint}>
+                Photograph every page of the day, in order. Keep the page flat, well lit, and fully inside the picture.
+              </Text>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                {scanPages.map((p, i) => (
+                  <Pressable key={i} onPress={() => setScanPages((list) => list.filter((_, j) => j !== i))} style={{ marginRight: 10 }}>
+                    <Image source={{ uri: p.uri }} style={s.thumb} />
+                    <Text style={[s.manualHint, { textAlign: 'center' }]}>Page {i + 1} · tap to remove</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            )}
+            <View style={[s.pdfActions, { marginBottom: 14 }]}>
+              <Btn small variant="gold" icon="camera-outline" title="Take photo" style={{ flex: 1 }} onPress={() => addPages(true)} disabled={scanBusy} />
+              <Btn small variant="soft" icon="images-outline" title="Gallery" style={{ flex: 1 }} onPress={() => addPages(false)} disabled={scanBusy} />
+            </View>
+            <Btn
+              icon="scan"
+              title={scanBusy ? 'Reading the book…' : `Read ${scanPages.length} page${scanPages.length === 1 ? '' : 's'}`}
+              onPress={runScan}
+              disabled={scanBusy || scanPages.length === 0}
+            />
+          </>
+        ) : (
+          <>
+            <Text style={[s.cap, { marginTop: 18 }]}>
+              {readyCount} ready · {checkCount} need checking
+            </Text>
+            <Text style={s.manualHint}>
+              Line and sale totals are calculated from quantity × unit price. Written amount and page-total fields are not used.
+            </Text>
+            {drafts.length === 0 && <Text style={s.manualHint}>All sales have been handled.</Text>}
+            {drafts.map((x) => (
+              <Card key={x.key} style={{ marginBottom: 10, opacity: x.issues.length === 0 && !x.include ? 0.5 : 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Text style={[s.saleNo, { flex: 1 }]}>Sale {x.ref || '—'} · {fcfa(x.total)}</Text>
+                  <Pill
+                    label={x.issues.length ? 'Check' : x.include ? 'OK' : 'Skipped'}
+                    tone={x.issues.length ? 'warn' : x.include ? 'ok' : 'neutral'}
+                  />
+                </View>
+                <View style={s.scanTableHeader}>
+                  <Text style={[s.scanProduct, s.scanHead]}>Product</Text>
+                  <Text style={[s.scanQty, s.scanHead]}>Qty</Text>
+                  <Text style={[s.scanPrice, s.scanHead]}>Unit</Text>
+                  <Text style={[s.scanAmount, s.scanHead]}>Total</Text>
+                </View>
+                {x.lines.map((l, i) => (
+                  <View key={i} style={s.scanTableRow}>
+                    <Field
+                      accessibilityLabel="Product name"
+                      value={l.text}
+                      onChangeText={(text) => updateDraftLine(x.key, i, { text, productId: matchProduct(text, manualProducts)?.id || null })}
+                      style={s.scanProduct}
+                      inputStyle={s.scanInput}
+                    />
+                    <Field
+                      accessibilityLabel="Quantity"
+                      keyboardType="number-pad"
+                      value={String(l.qty || '')}
+                      onChangeText={(value) => updateDraftLine(x.key, i, { qty: Number(value.replace(/[^\d]/g, '')) || 0 })}
+                      style={s.scanQty}
+                      inputStyle={[s.scanInput, { textAlign: 'center' }]}
+                    />
+                    <Field
+                      accessibilityLabel="Unit price"
+                      keyboardType="number-pad"
+                      value={String(l.unitPrice || '')}
+                      onChangeText={(value) => updateDraftLine(x.key, i, { unitPrice: Number(value.replace(/[^\d]/g, '')) || 0 })}
+                      style={s.scanPrice}
+                      inputStyle={[s.scanInput, { textAlign: 'right' }]}
+                    />
+                    <Text style={[s.scanAmount, s.scanLineTotal]}>{fcfa(l.qty * l.unitPrice)}</Text>
+                  </View>
+                ))}
+                <View style={s.scanSaleDetails}>
+                  <Field
+                    label="Customer (credit only)"
+                    value={x.customerText || ''}
+                    onChangeText={(customerText) => updateDraft(x.key, { customerText, customerId: '' })}
+                    placeholder="Walk-in"
+                    style={{ flex: 1 }}
+                    inputStyle={s.scanInput}
+                  />
+                  <Field
+                    label="Paid"
+                    keyboardType="number-pad"
+                    value={String(x.paid || '')}
+                    onChangeText={(value) => updateDraft(x.key, { paid: Number(value.replace(/[^\d]/g, '')) || 0 })}
+                    style={{ width: 110 }}
+                    inputStyle={[s.scanInput, { textAlign: 'right' }]}
+                  />
+                </View>
+                <Text style={s.saleSub}>Payment method</Text>
+                <View style={s.scanMethods}>
+                  {METHODS.map((method) => (
+                    <Chip key={method} label={method} active={x.method === method} onPress={() => updateDraft(x.key, { method })} />
+                  ))}
+                </View>
+                {x.issues.map((m, i) => (
+                  <Text key={i} style={{ color: colors.danger, fontSize: 12, marginTop: 3 }}>• {m}</Text>
+                ))}
+                <Btn
+                  small
+                  variant={x.include ? 'dangerSoft' : 'soft'}
+                  icon={x.include ? 'close' : 'add'}
+                  title={x.include ? 'Skip this sale' : 'Include this sale'}
+                  style={{ marginTop: 8 }}
+                  onPress={() => toggleDraft(x.key)}
+                />
+              </Card>
+            ))}
+            <Card style={{ marginBottom: 10 }}>
+              <Text style={s.cap}>Calculated totals</Text>
+              <FlowRow label="Sales total" value={scanTotal} color={colors.ink} bold />
+              <FlowRow label="Paid" value={scanPaid} color={colors.ok} />
+              <FlowRow label="On credit" value={Math.max(0, scanTotal - scanPaid)} color={colors.warn} />
+            </Card>
+            <Card style={{ marginBottom: 10 }}>
+              <Text style={s.cap}>Stock to reduce when saved</Text>
+              {scanStock.length === 0 ? (
+                <Text style={s.manualHint}>No tracked-stock products in the selected sales.</Text>
+              ) : scanStock.map(({ product, qty }) => (
+                <View key={product.id} style={s.stockPreviewRow}>
+                  <Text style={s.stockPreviewName}>{product.name}</Text>
+                  <Text style={[s.stockPreviewQty, Number(product.stock || 0) < qty && { color: colors.danger }]}>
+                    {num(product.stock)} − {num(qty)} = {num(Number(product.stock || 0) - qty)}
+                  </Text>
+                </View>
+              ))}
+              {stockShortages.length > 0 && (
+                <Text style={{ color: colors.danger, fontSize: 12, marginTop: 8 }}>
+                  Stock is insufficient. Correct quantities or skip sales before saving.
+                </Text>
+              )}
+            </Card>
+            {checkCount > 0 && (
+              <Text style={s.manualHint}>
+                Correct the highlighted values above before saving. Only ready, included sales will be saved.
+              </Text>
+            )}
+            <View style={s.pdfActions}>
+              <Btn
+                icon="checkmark-circle"
+                title={scanSaving ? 'Saving…' : `Save ${readyCount} sale${readyCount === 1 ? '' : 's'}`}
+                onPress={saveScanned}
+                disabled={scanSaving || readyCount === 0 || stockShortages.length > 0}
+                style={{ flex: 1 }}
+              />
+              <Btn variant="soft" title="Cancel" onPress={cancelScan} disabled={scanSaving} style={{ flex: 1 }} />
+            </View>
+            <Btn
+              small
+              variant="soft"
+              icon="refresh"
+              title="Scan again"
+              style={{ marginTop: 8 }}
+              onPress={() => { setDrafts(null); setScanPages([]); }}
+              disabled={scanSaving}
+            />
+          </>
+        )}
+      </KeyboardSheet>
+
       <KeyboardSheet visible={manualOpen} title="Record sale manually" onClose={() => setManualOpen(false)} tall>
         <Text style={s.cap}>Sale date</Text>
         <View style={s.dateQuickRow}>
@@ -632,6 +1083,15 @@ export default function Reports() {
             onChange={(v) => { setManualDate(v); setManualCalOpen(false); }}
           />
         ) : null}
+
+        <Btn
+          small
+          variant="soft"
+          icon="scan-outline"
+          title="Scan book pages instead"
+          style={{ marginTop: 14 }}
+          onPress={() => { setManualOpen(false); setScanPages([]); setDrafts(null); setScanOpen(true); }}
+        />
 
         <Text style={[s.cap, { marginTop: 16 }]}>Customer</Text>
         <Chip label={manualCustomerId ? 'Clear customer' : 'Walk-in sale'} active={!manualCustomerId} onPress={() => setManualCustomerId('')} />
@@ -725,7 +1185,7 @@ export default function Reports() {
         <Btn icon="checkmark-circle" title={busy ? 'Saving…' : 'Save payment adjustment'} onPress={saveSalePayment} disabled={busy || parseAmount(paidInput) > (editingSale?.total || 0)} />
       </KeyboardSheet>
 
-      <KeyboardSheet visible={expOpen} title="New expense" onClose={() => setExpOpen(false)}>
+      <KeyboardSheet visible={expOpen} title={editingExpense ? 'Edit expense' : 'New expense'} onClose={closeExpenseEditor}>
         <Text style={s.cap}>Category</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 8, marginBottom: 14 }}>
           {EXPENSE_CATEGORIES.map((c) => <Chip key={c} label={c} active={expCat === c} onPress={() => setExpCat(c)} />)}
@@ -736,7 +1196,7 @@ export default function Reports() {
           {METHODS.map((m) => <Chip key={m} icon={METHOD_ICONS[m]} label={m} active={expMethod === m} onPress={() => setExpMethod(m)} />)}
         </View>
         <Field label="Note" value={expNote} onChangeText={setExpNote} />
-        <Btn icon="checkmark" title={busy ? 'Saving…' : 'Save expense'} onPress={saveExpense} disabled={busy || parseAmount(expAmt) <= 0} />
+        <Btn icon="checkmark" title={busy ? 'Saving…' : editingExpense ? 'Save changes' : 'Save expense'} onPress={saveExpense} disabled={busy || parseAmount(expAmt) <= 0} />
       </KeyboardSheet>
 
       <KeyboardSheet visible={!!cancelId} title="Cancel sale" onClose={() => setCancelId(null)}>
@@ -778,8 +1238,31 @@ const s = StyleSheet.create({
   manualHint: { color: colors.muted, fontSize: 12, marginTop: 3 },
   manualQty: { minWidth: 22, textAlign: 'center', color: colors.ink, fontWeight: '800' },
   manualSelectedLine: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 8 },
+  thumb: { width: 96, height: 128, borderRadius: 10, backgroundColor: '#EFEBE0' },
+  scanTableHeader: { flexDirection: 'row', alignItems: 'center', marginTop: 14, paddingBottom: 5, borderBottomWidth: 1, borderBottomColor: colors.line },
+  scanTableRow: { flexDirection: 'row', alignItems: 'center', gap: 5, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
+  scanProduct: { flex: 1, minWidth: 0 },
+  scanQty: { width: 42 },
+  scanPrice: { width: 76 },
+  scanAmount: { width: 82, textAlign: 'right' },
+  scanHead: { color: colors.muted, fontSize: 10, fontWeight: '800', textTransform: 'uppercase' },
+  scanInput: { minHeight: 38, fontSize: 12, paddingHorizontal: 6, paddingVertical: 4 },
+  scanLineTotal: { color: colors.ink, fontSize: 11, fontWeight: '700' },
+  scanSaleDetails: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginTop: 10 },
+  scanMethods: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 6, marginTop: 4 },
+  stockPreviewRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
+  stockPreviewName: { flex: 1, color: colors.ink, fontSize: 13, fontWeight: '700' },
+  stockPreviewQty: { color: colors.muted, fontSize: 12, fontWeight: '700' },
+  expenseRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
+  expenseDivider: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
+  expenseName: { color: colors.ink, fontSize: 14, fontWeight: '700' },
+  expenseSub: { color: colors.muted, fontSize: 11, marginTop: 3 },
+  expenseActions: { alignItems: 'flex-end', marginLeft: 8 },
+  expenseAmount: { color: colors.danger, fontSize: 13, fontWeight: '800' },
+  expenseEdit: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 8, height: 30, marginTop: 3, borderRadius: 8, backgroundColor: colors.forestTint },
+  expenseEditText: { color: colors.forest, fontSize: 11, fontWeight: '700' },
 
-  // Date picker (manual sale)
+  // Date picker (manual sale / scan)
   dateQuickRow: { flexDirection: 'row', marginBottom: 10 },
   dateBtn: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 14,

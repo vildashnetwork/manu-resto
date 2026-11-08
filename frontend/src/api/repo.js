@@ -1,4 +1,5 @@
 import { BACKEND_URL } from '../config/backend';
+import { METHODS } from '../theme';
 
 async function request(path, options = {}) {
   const response = await fetch(`${BACKEND_URL}${path}`, {
@@ -238,6 +239,19 @@ export async function getRecentSales(limit = 30, from = 0, to = Date.now()) {
 export async function addExpense({ category, amount, method, note }) {
   if (!(amount > 0)) throw new Error('Enter an amount greater than 0');
   return post('/expenses', { category, amount, method, note: note || null });
+}
+
+export async function updateExpense(expenseId, { category, amount, method, note }) {
+  if (!expenseId) throw new Error('Expense ID is required');
+  if (!category?.trim()) throw new Error('Expense category is required');
+  if (!Number.isSafeInteger(amount) || amount < 1) throw new Error('Enter a positive whole-number amount');
+  if (!METHODS.includes(method)) throw new Error('Select a valid payment method');
+  return entity(await put(`/expenses/${encodeURIComponent(expenseId)}`, {
+    category: category.trim(),
+    amount,
+    method,
+    note: note || null,
+  }), 'expense');
 }
 
 export async function getReport(from, to) {

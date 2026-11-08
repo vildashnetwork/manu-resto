@@ -820,6 +820,23 @@ router.post('/expenses', asyncRoute(async (req, res) => {
   res.status(201).json({ expense: { ...expense.toObject(), id: String(expense._id) } });
 }));
 
+router.put('/expenses/:id', asyncRoute(async (req, res) => {
+  if (!isId(req.params.id)) throw httpError(400, 'Invalid expense ID.');
+  const { category, amount, method, note } = req.body;
+  if (typeof category !== 'string' || !category.trim()) throw httpError(400, 'Expense category is required.');
+  if (!Number.isSafeInteger(amount) || amount < 1) throw httpError(400, 'Amount must be a positive whole number.');
+  if (!METHODS.includes(method)) throw httpError(400, 'Invalid payment method.');
+
+  const expense = await Expense.findById(req.params.id);
+  if (!expense) throw httpError(404, 'Expense not found.');
+  expense.category = category.trim();
+  expense.amount = amount;
+  expense.method = method;
+  expense.note = typeof note === 'string' ? note.trim() || null : null;
+  await expense.save();
+  res.json({ expense: { ...expense.toObject(), id: String(expense._id) } });
+}));
+
 router.get('/reports', asyncRoute(async (req, res) => {
   const created_at = parseRange(req.query);
   const [sales, payments, expenses, customers] = await Promise.all([

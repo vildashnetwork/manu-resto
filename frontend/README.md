@@ -2,6 +2,8 @@ npm install -g eas-cli
 eas --version
 eas login
 
+eas build -p android --profile preview
+
 eas build:configureonte
 
 # Manu's Resto Manager (MVP)
@@ -18,7 +20,7 @@ npx expo start --dev-client
 
 The configured logo splash screen is native app configuration. Expo Go shows its own launch screen, and over-the-air JavaScript updates cannot change the native splash assets. To see the branded splash on Android, build and install a fresh native app after changing `app.json` (for example, `npx expo run:android` with Android Studio set up, or an EAS Android build).
 
-Barcode scanning uses VisionCamera and ZXing native modules, not Expo Camera or Google Play Services. Expo Go does not include these native modules. The new architecture is enabled for Nitro Modules. Build and install a development client with `eas build --platform android --profile development`, then start Metro with `npm start`. For a standalone APK, build and install `eas build --platform android --profile preview`. A JavaScript reload or OTA update cannot add native modules to an already-built app.
+Barcode scanning uses VisionCamera and ZXing native modules, not Expo Camera or Google Play Services. Sales-book scanning uses on-device Google ML Kit text recognition. Expo Go does not include these native modules. The new architecture is enabled for Nitro Modules. Build and install a development client with `eas build --platform android --profile development`, then start Metro with `npm start`. For a standalone APK, build and install `eas build --platform android --profile preview`. A JavaScript reload or OTA update cannot add native modules to an already-built app.
 
 ## What is built (Phase 2 MVP)
 
@@ -26,7 +28,9 @@ Barcode scanning uses VisionCamera and ZXing native modules, not Expo Camera or 
 - **Sales**: searchable product grid, barcode scanning, adjustable checkout prices, mixed payments (Cash / MTN MoMo / Xcash / Orange Money / Bank transfer), partial payment with the rest on credit, credit-limit authorization, and branded printable/shareable receipts.
 - **Customers**: profiles, editable customer debt and credit limit, customer deletion, opening debt (labelled as migrated), dated statement with running balance, and repayments (never counted as sales).
 - **Stock**: searchable and filterable products with editable details and barcodes, tracked stock, purchases, wastage, damage, complimentary, adjustments, low-stock threshold, required Cloudinary images, and confirmed product deletion.
-- **Reports**: preset or custom date ranges; manual dated sales with searchable products, customer assignment, and payment amount; downloadable, shareable, or printable customer receipts; paid/unpaid filters; sales vs collected vs credit vs debt recovered vs expenses kept separate; payment-method breakdown; expected cash; best sellers; gross profit estimate; expenses; editable sale payment records and cancellation.
+- **Reports**: preset or custom date ranges; on-device sales-book scanning with an editable review of recognized products, quantities, and unit prices; calculated totals and tracked-stock reductions shown before saving; explicit Save/Cancel; manual dated sales with searchable products, customer assignment, and payment amount; editable expenses; downloadable, shareable, or printable customer receipts; paid/unpaid filters; sales vs collected vs credit vs debt recovered vs expenses kept separate; payment-method breakdown; expected cash; best sellers; gross profit estimate; editable sale payment records and cancellation.
+
+On-device text recognition can misread handwritten entries. Review and correct every product, quantity, unit price, customer, and paid amount in the scan preview before saving. Line totals are calculated from quantity × unit price; written amount and page-total fields are ignored.
 
 The branded app icon uses `public/bglogo.png`; Android adaptive icons use `public/nobglogo.png` over the restaurant green. Receipts embed the transparent logo so it prints consistently on web and native platforms.
 
@@ -39,7 +43,7 @@ Set `EXPO_PUBLIC_API_URL` to the API root if it differs from the default (includ
 - `GET /customers`, `GET /customers/:id`, `POST /customers`, `PUT /customers/:id`, `DELETE /customers/:id`, `GET /customers/:id/statement`
 - `POST /payments/repayments`
 - `POST /sales`, `GET /sales?limit=&from=&to=`, `POST /sales/:id/cancel`, `PUT /sales/:id/payment`
-- `POST /expenses`, `GET /reports?from=&to=`
+- `POST /expenses`, `PUT /expenses/:id`, `GET /reports?from=&to=`
 
 List responses may be a raw array or an object keyed by the resource name (or `data`). Single-record responses may be the record itself, under the resource name, or under `data`. Reports should provide the fields consumed by the Reports screen: totals/counts, `byMethod`, `topProducts`, and `expList`. Sale requests include `idempotencyKey`, `items`, `customerId`, `payments`, and `allowOverLimit`; manual dated sales also include `createdAt` as a Unix timestamp in milliseconds. Product requests include `imageUrl`.
 

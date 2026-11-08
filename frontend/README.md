@@ -22,6 +22,8 @@ The configured logo splash screen is native app configuration. Expo Go shows its
 
 Barcode scanning uses VisionCamera and ZXing native modules, not Expo Camera or Google Play Services. Sales-book scanning uses on-device Google ML Kit text recognition. Expo Go does not include these native modules. The new architecture is enabled for Nitro Modules. Build and install a development client with `eas build --platform android --profile development`, then start Metro with `npm start`. For a standalone APK, build and install `eas build --platform android --profile preview`. A JavaScript reload or OTA update cannot add native modules to an already-built app.
 
+Push notifications use Expo Notifications and the backend Expo Push Service. After building and installing the APK, open **Settings → App push notifications → Enable on this device** and allow Android's permission prompt. Configure Firebase Cloud Messaging v1 credentials for the EAS project using `eas credentials --platform android`; do not commit service-account files or keys. Deploy the backend changes as well as the APK. While debt, low-stock, out-of-stock, or no-sales alerts are active, the backend sends one combined reminder every 10 minutes; Android may delay delivery for battery/network reasons.
+
 ## What is built (Phase 2 MVP)
 
 - **Home**: today's sales, collected, credit sales, debt recovered, expenses, outstanding debt, low-stock warning, recent sales.

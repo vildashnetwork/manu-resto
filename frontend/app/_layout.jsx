@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { Btn } from '../src/components/ui';
 import { AppDrawer, DrawerContext, HeaderBrandTitle, MenuButton, RefreshButton, RefreshProvider } from '../src/components/AppNavigation';
+import { configurePushNotifications, syncExistingPushToken } from '../src/api/pushNotifications';
 import { colors } from '../src/theme';
 
 export default function RootLayout() {
@@ -42,6 +43,11 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (Platform.OS === 'web') return undefined;
+    void configurePushNotifications()
+      .then(syncExistingPushToken)
+      .catch((error) => {
+      console.warn('Push notifications are unavailable in this app build:', error.message || error);
+      });
     unlock();
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'background') {

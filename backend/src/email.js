@@ -1,4 +1,5 @@
 import { Setting } from './models.js';
+import { sendExpoPush } from './push.js';
 
 const BREVO_URL = 'https://api.brevo.com/v3/smtp/email';
 const RETRY_DELAYS = [500, 1500];
@@ -9,6 +10,9 @@ const EMAIL_THEMES = {
   outOfStock: { accent: '#B3402F', tint: '#F8E5E1', label: 'Urgent stock alert' },
   lowStock: { accent: '#C27A1A', tint: '#FFF1D8', label: 'Stock update' },
   creditDebt: { accent: '#52705A', tint: '#E8EFEA', label: 'Customer account update' },
+  customerPayments: { accent: '#52705A', tint: '#E8EFEA', label: 'Customer repayment' },
+  sales: { accent: '#1E3A2B', tint: '#E8EFEA', label: 'Sale recorded' },
+  stock: { accent: '#C27A1A', tint: '#FFF1D8', label: 'Stock update' },
   expenses: { accent: '#C8A24A', tint: '#F7EFD9', label: 'Expense recorded' },
   dailySummary: { accent: '#1E3A2B', tint: '#E8EFEA', label: 'Daily business summary' },
   test: { accent: '#2E7D4F', tint: '#E4F2E8', label: 'Email delivery test' },
@@ -157,13 +161,24 @@ async function sendEmail({ recipient, subject, message, type }) {
 export async function notifyAdmin(type, subject, message) {
   try {
     const setting = await Setting.findById('main').lean();
-    if (!setting?.adminEmail) {
-      console.warn(`Could not send "${subject}": set a recipient email in Settings.`);
+    if (!setting || setting.notifications?.[type] === false) {
+      console.info(`Skipped "${subject}": the ${type} notification is disabled in Settings.`);
       return false;
     }
-    if (setting.notifications?.[type] === false) {
-      console.info(`Skipped "${subject}": the ${type} email notification is disabled in Settings.`);
-      return false;
+    let pushSent = false;
+    if (type !== 'dailySummary' && setting.expoPushTokens?.length) {
+      pushSent = await sendExpoPush(setting.expoPushTokens, {
+        title: subject,
+        body: message,
+        data: { type },
+      }).catch((error) => {
+        console.error(`Could not send ${type} push notification:`, error.message || error);
+        return false;
+      });
+    }
+    if (!setting.adminEmail) {
+      console.warn(`Could not send "${subject}" email: set a recipient email in Settings.`);
+      return pushSent;
     }
     await sendEmail({ recipient: setting.adminEmail, subject, message, type });
     console.info(`Email sent to the configured admin recipient (${type}).`);

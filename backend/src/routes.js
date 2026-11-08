@@ -15,7 +15,10 @@ import { notifyAdmin, notifyUrgentAdmin, sendTestEmail } from './email.js';
 
 const router = Router();
 const METHODS = ['Cash', 'MTN MoMo', 'Xcash', 'Orange Money', 'Bank transfer'];
-const NOTIFICATION_PREFERENCES = ['lowStock', 'creditDebt', 'expenses', 'dailySummary', 'urgentDebt', 'outOfStock'];
+const NOTIFICATION_PREFERENCES = [
+  'lowStock', 'creditDebt', 'expenses', 'dailySummary', 'urgentDebt', 'outOfStock',
+  'sales', 'stock', 'customerPayments', 'noSales',
+];
 let lastTestEmailAt = 0;
 const now = () => Date.now();
 
@@ -74,7 +77,10 @@ function serializeSale(sale) {
 }
 
 function serializeSetting(setting) {
+  const value = setting.toObject ? setting.toObject() : setting;
   return {
+    pushNotificationsEnabled: Boolean(value.expoPushTokens?.length),
+    pushDeviceCount: value.expoPushTokens?.length || 0,
     adminEmail: setting.adminEmail,
     notifications: {
       lowStock: true,
@@ -83,6 +89,10 @@ function serializeSetting(setting) {
       dailySummary: true,
       urgentDebt: true,
       outOfStock: true,
+      sales: true,
+      stock: true,
+      customerPayments: true,
+      noSales: true,
       ...setting.notifications,
     },
     senderEmail: process.env.BREVO_SENDER_EMAIL || '',
@@ -142,6 +152,32 @@ router.put('/settings', asyncRoute(async (req, res) => {
     { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
   );
   res.json({ settings: serializeSetting(setting) });
+}));
+
+router.post('/settings/push-token', asyncRoute(async (req, res) => {
+  const { token } = req.body;
+  if (typeof token !== 'string' || !/^(Expo|Exponent)PushToken\[[^\]]+\]$/.test(token)) {
+    throw httpError(400, 'A valid Expo push token is required.');
+  }
+  const setting = await Setting.findByIdAndUpdate(
+    'main',
+    { $addToSet: { expoPushTokens: token } },
+    { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+  );
+  res.json({ registered: true, pushNotificationsEnabled: Boolean(setting.expoPushTokens.length) });
+}));
+
+router.delete('/settings/push-token', asyncRoute(async (req, res) => {
+  const { token } = req.body;
+  if (typeof token !== 'string' || !/^(Expo|Exponent)PushToken\[[^\]]+\]$/.test(token)) {
+    throw httpError(400, 'A valid Expo push token is required.');
+  }
+  const setting = await Setting.findByIdAndUpdate(
+    'main',
+    { $pull: { expoPushTokens: token } },
+    { new: true, runValidators: true }
+  );
+  res.json({ registered: false, pushNotificationsEnabled: Boolean(setting?.expoPushTokens.length) });
 }));
 
 router.post('/settings/test-email', asyncRoute(async (req, res) => {
@@ -307,6 +343,9 @@ router.post('/stock/movements', asyncRoute(async (req, res) => {
   if (result.becameEmpty) {
     void notifyUrgentAdmin('outOfStock', 'Urgent · product out of stock', `${result.product.name} has run out of stock.`);
   }
+  if (!result.becameLow && !result.becameEmpty) {
+    void notifyAdmin('stock', 'Stock updated', `${result.product.name}: ${result.product.stock} ${result.product.unit || 'units'} in stock after a ${type.replace(/_/g, ' ')}.`);
+  }
   res.status(201).json({ product: serializeProduct(result.product) });
 }));
 
@@ -454,9 +493,14 @@ router.post('/payments/repayments', asyncRoute(async (req, res) => {
         ref_id: String(payment._id),
         note: `Repayment (${method})`,
       }], { session, ordered: true });
-      return payment;
+      return { payment, customerName: customer.name, balance: customer.balance - amount };
     });
-    res.status(201).json({ duplicate: false, paymentId: String(result._id) });
+    void notifyAdmin(
+      'customerPayments',
+      'Customer repayment recorded',
+      `${result.customerName} paid FCFA ${amount.toLocaleString()} by ${method}. Remaining balance: FCFA ${result.balance.toLocaleString()}.`
+    );
+    res.status(201).json({ duplicate: false, paymentId: String(result.payment._id) });
   } catch (error) {
     if (error.code === 11000) {
       const duplicate = await Payment.findOne({ idempotencyKey: idempotencyKey.trim() });
@@ -617,6 +661,8 @@ router.post('/sales', asyncRoute(async (req, res) => {
     if (result.debtAlert) {
       const { customerName: name, credit, balance } = result.debtAlert;
       void notifyAdmin('creditDebt', 'Customer debt increased', `${name}'s debt increased by FCFA ${credit.toLocaleString()}. Current balance: FCFA ${balance.toLocaleString()}.`);
+    } else {
+      void notifyAdmin('sales', 'Sale recorded', `Sale ${result.sale.receipt_no} recorded for FCFA ${result.sale.total.toLocaleString()}.`);
     }
     res.status(201).json({ sale: serializeSale(result.sale), duplicate: false });
   } catch (error) {
@@ -834,6 +880,7 @@ router.put('/expenses/:id', asyncRoute(async (req, res) => {
   expense.method = method;
   expense.note = typeof note === 'string' ? note.trim() || null : null;
   await expense.save();
+  void notifyAdmin('expenses', 'Expense updated', `${expense.category}: FCFA ${expense.amount.toLocaleString()} (${expense.method})${expense.note ? `\n${expense.note}` : ''}.`);
   res.json({ expense: { ...expense.toObject(), id: String(expense._id) } });
 }));
 

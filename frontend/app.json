@@ -35,11 +35,12 @@
         }
       ],
       "expo-sharing",
-      "expo-asset"
+      "expo-asset",
+      "expo-notifications"
     ],
     "android": {
       "package": "com.manusresto.manager",
-      "versionCode": 34,
+      "versionCode": 35,
       "adaptiveIcon": {
         "foregroundImage": "./public/nobglogo.png",
         "backgroundColor": "#0B3827"

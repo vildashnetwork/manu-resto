@@ -109,11 +109,17 @@ const settingSchema = new Schema({
     dailySummary: { type: Boolean, default: true },
     urgentDebt: { type: Boolean, default: true },
     outOfStock: { type: Boolean, default: true },
+    sales: { type: Boolean, default: true },
+    stock: { type: Boolean, default: true },
+    customerPayments: { type: Boolean, default: true },
+    noSales: { type: Boolean, default: true },
   },
+  expoPushTokens: { type: [String], default: [] },
   notificationState: {
     urgentDebtLastSentAt: { type: Number, default: 0 },
     outOfStockLastSentAt: { type: Number, default: 0 },
     dailySummaryLastSentKey: { type: String, default: '' },
+    businessReminderLastSentAt: { type: Number, default: 0 },
   },
 }, options);
 

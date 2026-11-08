@@ -137,6 +137,19 @@ export async function getSettings() {
   return entity(await get('/settings'), 'settings');
 }
 
+export async function registerExpoPushToken(token) {
+  if (typeof token !== 'string' || !token) throw new Error('A push token is required');
+  return post('/settings/push-token', { token });
+}
+
+export async function unregisterExpoPushToken(token) {
+  if (typeof token !== 'string' || !token) throw new Error('A push token is required');
+  return entity(await request('/settings/push-token', {
+    method: 'DELETE',
+    body: JSON.stringify({ token }),
+  }), 'push token');
+}
+
 export async function updateSettings(settings) {
   return entity(await put('/settings', settings), 'settings');
 }

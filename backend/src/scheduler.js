@@ -1,8 +1,10 @@
 import 'dotenv/config';
 import { Customer, Expense, Payment, Product, Sale, Setting } from './models.js';
 import { notifyAdmin, notifyUrgentAdmin } from './email.js';
+import { sendExpoPush } from './push.js';
 
 export const NOTIFICATION_TIME_ZONE = process.env.NOTIFICATION_TIME_ZONE || 'Africa/Douala';
+export const PUSH_REMINDER_INTERVAL = 10 * 60 * 1000;
 
 const SCHEDULER_INTERVAL = 30 * 1000;
 
@@ -12,6 +14,7 @@ let checkInProgress = false;
 let lastDailySummaryKey = '';
 let lastDailySummaryAttemptAt = 0;
 let lastUrgentCheckAt = 0;
+let lastPushReminderCheckAt = 0;
 
 function getFormatter(timeZone) {
   if (!formatterCache.has(timeZone)) {
@@ -120,6 +123,100 @@ export function createDebtReminderMessage(customers) {
     message.push('', `Showing the 20 largest balances of ${debtors.length} customers.`);
   }
   return message.join('\n');
+}
+
+function localDayNumber(date, timeZone) {
+  const { year, month, day } = getZonedDateParts(date, timeZone);
+  return Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
+}
+
+export function getDaysWithoutSales(lastSaleAt, now = new Date(), timeZone = NOTIFICATION_TIME_ZONE) {
+  if (!Number.isFinite(Number(lastSaleAt)) || Number(lastSaleAt) <= 0) return null;
+  const lastSale = new Date(Number(lastSaleAt));
+  return Math.max(0, localDayNumber(now, timeZone) - localDayNumber(lastSale, timeZone));
+}
+
+export function createBusinessReminderMessage({
+  customers = [],
+  products = [],
+  lastSaleAt = null,
+  daysWithoutSales = null,
+  notifications = {},
+}) {
+  const alerts = [];
+  const debtors = customers.filter((customer) => customer.balance > 0);
+  if (notifications.urgentDebt !== false && debtors.length) {
+    const debt = debtors.reduce((sum, customer) => sum + customer.balance, 0);
+    alerts.push(`Customer debt: FCFA ${debt.toLocaleString()} across ${debtors.length} customer(s)`);
+  }
+
+  const tracked = products.filter((product) => product.tracked);
+  const outOfStock = tracked.filter((product) => product.stock <= 0);
+  if (notifications.outOfStock !== false && outOfStock.length) {
+    alerts.push(`Out of stock: ${outOfStock.slice(0, 5).map((product) => product.name).join(', ')}`);
+  }
+  const lowStock = tracked.filter((product) =>
+    product.stock > 0 && product.lowStockThreshold > 0 && product.stock <= product.lowStockThreshold
+  );
+  if (notifications.lowStock !== false && lowStock.length) {
+    alerts.push(`Low stock: ${lowStock.slice(0, 5).map((product) => `${product.name} (${product.stock})`).join(', ')}`);
+  }
+
+  if (notifications.noSales !== false && (!lastSaleAt || daysWithoutSales >= 1)) {
+    alerts.push(lastSaleAt
+      ? `No sales recorded today; last sale was ${daysWithoutSales} day(s) ago`
+      : 'No sales have ever been recorded');
+  }
+  return alerts.length ? alerts.join(' · ').slice(0, 240) : null;
+}
+
+async function sendBusinessReminder(date = new Date()) {
+  const setting = await Setting.findById('main')
+    .select('notifications expoPushTokens notificationState.businessReminderLastSentAt')
+    .lean();
+  if (!setting?.expoPushTokens?.length) return false;
+
+  const [customers, products, latestSale] = await Promise.all([
+    setting.notifications?.urgentDebt === false
+      ? []
+      : Customer.find({ active: true, balance: { $gt: 0 } }).select('name balance').sort({ balance: -1 }).lean(),
+    setting.notifications?.lowStock === false && setting.notifications?.outOfStock === false
+      ? []
+      : Product.find({ active: true, tracked: true }).select('name tracked stock lowStockThreshold').lean(),
+    setting.notifications?.noSales === false
+      ? null
+      : Sale.findOne({ status: 'completed' }).select('created_at').sort({ created_at: -1 }).lean(),
+  ]);
+  const lastSaleAt = latestSale?.created_at || null;
+  const message = createBusinessReminderMessage({
+    customers,
+    products,
+    lastSaleAt,
+    daysWithoutSales: getDaysWithoutSales(lastSaleAt, date),
+    notifications: setting.notifications || {},
+  });
+  if (!message) return false;
+
+  const now = date.getTime();
+  const previous = setting.notificationState?.businessReminderLastSentAt || 0;
+  if (now - previous < PUSH_REMINDER_INTERVAL) return false;
+  const claim = await Setting.updateOne(
+    {
+      _id: 'main',
+      $or: [
+        { 'notificationState.businessReminderLastSentAt': { $lte: now - PUSH_REMINDER_INTERVAL } },
+        { 'notificationState.businessReminderLastSentAt': { $exists: false } },
+      ],
+    },
+    { $set: { 'notificationState.businessReminderLastSentAt': now } }
+  );
+  if (claim.modifiedCount !== 1) return false;
+
+  return sendExpoPush(setting.expoPushTokens, {
+    title: 'Manu’s Resto · business reminder',
+    body: message,
+    data: { type: 'businessReminder' },
+  });
 }
 
 function formatDate(date, timeZone) {
@@ -290,6 +387,11 @@ export async function checkAndSend(date = new Date()) {
         sendOutOfStockNotification(date.getTime()),
       ]);
     }
+
+    if (date.getTime() - lastPushReminderCheckAt >= PUSH_REMINDER_INTERVAL) {
+      lastPushReminderCheckAt = date.getTime();
+      await sendBusinessReminder(date);
+    }
   } catch (error) {
     console.error('Notification scheduler check failed:', error.message || error);
   } finally {
@@ -302,6 +404,7 @@ export function startNotificationScheduler() {
 
   console.info(`Notification scheduler started · ${NOTIFICATION_TIME_ZONE}`);
   console.info(`Business summary emails: every hour at :00 (${NOTIFICATION_TIME_ZONE})`);
+  console.info('Active business push reminders: every 10 minutes.');
   void checkAndSend();
   schedulerInterval = setInterval(() => void checkAndSend(), SCHEDULER_INTERVAL);
   return schedulerInterval;

@@ -1,7 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Btn, Card, Field, Hero, ScreenShimmer, useLoad, screenStyle } from '../src/components/ui';
-import { getSettings, sendTestEmail, updateSettings } from '../src/api/repo';
+import {
+  getSettings,
+  registerExpoPushToken,
+  sendTestEmail,
+  unregisterExpoPushToken,
+  updateSettings,
+} from '../src/api/repo';
+import { getCurrentExpoPushToken, registerForPushNotifications } from '../src/api/pushNotifications';
 import { colors, radius } from '../src/theme';
 
 const DEFAULT_NOTIFICATIONS = {
@@ -11,15 +18,23 @@ const DEFAULT_NOTIFICATIONS = {
   dailySummary: true,
   urgentDebt: true,
   outOfStock: true,
+  sales: true,
+  stock: true,
+  customerPayments: true,
+  noSales: true,
 };
 
 const NOTIFICATION_OPTIONS = [
-  { key: 'lowStock', title: 'Low stock alerts', detail: 'Email when tracked stock reaches its configured threshold.' },
-  { key: 'creditDebt', title: 'Customer debt increases', detail: 'Email when a credit sale or opening balance adds to debt.' },
-  { key: 'expenses', title: 'Expenses recorded', detail: 'Email when a new expense is entered.' },
+  { key: 'sales', title: 'Sales recorded', detail: 'App push when a new sale is saved.' },
+  { key: 'lowStock', title: 'Low stock alerts', detail: 'Email and app push when tracked stock reaches its configured threshold.' },
+  { key: 'creditDebt', title: 'Customer debt increases', detail: 'Email and app push when a credit sale or opening balance adds to debt.' },
+  { key: 'customerPayments', title: 'Customer repayments', detail: 'App push when a customer payment is recorded.' },
+  { key: 'stock', title: 'Stock changes', detail: 'App push when stock is added, removed, or adjusted.' },
+  { key: 'expenses', title: 'Expenses recorded', detail: 'Email and app push when a new expense is entered.' },
   { key: 'dailySummary', title: 'Hourly business summaries', detail: 'Email sales, customer debt, stock, and expenses every hour, all day.' },
-  { key: 'urgentDebt', title: 'Hourly customer debt reminders', detail: 'Send an immediate reminder when the backend starts, then email every hour while any customer still owes money.' },
-  { key: 'outOfStock', title: 'Urgent out-of-stock alerts', detail: 'Email when tracked products run out, then remind every hour while any remain out.' },
+  { key: 'urgentDebt', title: 'Customer debt reminders', detail: 'App push every 10 minutes while customer debt remains unpaid.' },
+  { key: 'outOfStock', title: 'Out-of-stock reminders', detail: 'Email when tracked products run out; app push every 10 minutes while any remain out.' },
+  { key: 'noSales', title: 'Days without sales', detail: 'App push every 10 minutes after a full day passes without a recorded sale.' },
 ];
 
 export default function Settings() {
@@ -31,6 +46,9 @@ export default function Settings() {
   const [senderConfigured, setSenderConfigured] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testingEmail, setTestingEmail] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushToken, setPushToken] = useState(null);
+  const [pushBusy, setPushBusy] = useState(false);
 
   useEffect(() => {
     if (!loaded) return;
@@ -39,7 +57,44 @@ export default function Settings() {
     setNotifications({ ...DEFAULT_NOTIFICATIONS, ...loaded.notifications });
     setSenderEmail(loaded.senderEmail || '');
     setSenderConfigured(Boolean(loaded.senderConfigured));
+    setPushEnabled(Boolean(loaded.pushNotificationsEnabled));
+    getCurrentExpoPushToken()
+      .then((token) => { if (token) setPushToken(token); })
+      .catch((error) => console.warn('Could not read the app push token:', error.message || error));
   }, [loaded]);
+
+  async function enablePush() {
+    if (pushBusy) return;
+    setPushBusy(true);
+    try {
+      const token = await registerForPushNotifications();
+      await registerExpoPushToken(token);
+      setPushToken(token);
+      setPushEnabled(true);
+      Alert.alert('App notifications enabled', 'This device is registered for sales, customer debt, stock, and business reminders.');
+    } catch (error) {
+      Alert.alert('Could not enable app notifications', error.message || String(error));
+    } finally {
+      setPushBusy(false);
+    }
+  }
+
+  async function disablePush() {
+    if (pushBusy) return;
+    setPushBusy(true);
+    try {
+      const token = pushToken || await getCurrentExpoPushToken();
+      if (!token) throw new Error('Allow notifications in Android settings first, then try again.');
+      const result = await unregisterExpoPushToken(token);
+      setPushToken(null);
+      setPushEnabled(Boolean(result.pushNotificationsEnabled));
+      Alert.alert('Device notifications disabled', 'This device will no longer receive app push alerts.');
+    } catch (error) {
+      Alert.alert('Could not disable app notifications', error.message || String(error));
+    } finally {
+      setPushBusy(false);
+    }
+  }
 
   async function save() {
     if (saving) return;
@@ -114,8 +169,41 @@ export default function Settings() {
         </Card>
 
         <Card style={{ marginTop: 14 }}>
+          <Text style={s.sectionTitle}>App push notifications</Text>
+          <Text style={s.description}>
+            Register this device to receive alerts even when the app is closed. Active debt, low-stock, out-of-stock, and no-sales reminders repeat every 10 minutes.
+          </Text>
+          <Text style={s.pushStatus}>
+            {pushEnabled
+              ? `Push is registered on ${loaded?.pushDeviceCount || 1} device(s).`
+              : 'Push notifications are not registered yet.'}
+          </Text>
+          <View style={s.pushActions}>
+            <Btn
+              title={pushBusy ? 'Working…' : 'Enable on this device'}
+              icon="notifications-outline"
+              onPress={enablePush}
+              disabled={pushBusy}
+              style={{ flex: 1 }}
+            />
+            {pushToken ? (
+              <Btn
+                title="Disable"
+                variant="soft"
+                onPress={disablePush}
+                disabled={pushBusy}
+                style={{ flex: 1 }}
+              />
+            ) : null}
+          </View>
+          <Text style={s.description}>
+            Android may delay or suppress push alerts due to battery or network settings. Allow notifications for Manu’s Resto Manager in Android settings.
+          </Text>
+        </Card>
+
+        <Card style={{ marginTop: 14 }}>
           <Text style={s.sectionTitle}>Email notifications</Text>
-          <Text style={s.description}>Save your recipient email above. Business summaries are sent every hour, around the clock, in the backend notification time zone.</Text>
+          <Text style={s.description}>These preferences also control app alerts of the same type. Business summary emails continue every hour.</Text>
           {NOTIFICATION_OPTIONS.map((option, index) => (
             <View key={option.key} style={[s.option, index === NOTIFICATION_OPTIONS.length - 1 && s.optionLast]}>
               <View style={s.optionText}>
@@ -162,4 +250,6 @@ const s = StyleSheet.create({
   optionTitle: { color: colors.ink, fontSize: 14, fontWeight: '700' },
   optionDescription: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: 3 },
   note: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 12, textAlign: 'center' },
+  pushStatus: { color: colors.forest, fontSize: 13, fontWeight: '700', marginBottom: 10 },
+  pushActions: { flexDirection: 'row', gap: 8, marginBottom: 12 },
 });

@@ -8,7 +8,6 @@
     "icon": "./public/bglogo.png",
     "userInterfaceStyle": "light",
     "backgroundColor": "#1E3A2B",
-    "newArchEnabled": true,
     "plugins": [
       "expo-router",
       "expo-sqlite",

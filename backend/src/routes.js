@@ -47,6 +47,14 @@ function parseRange(query) {
   return { $gte: from, $lte: to };
 }
 
+function parseRecordDate(value, label) {
+  const timestamp = value ?? now();
+  if (!Number.isSafeInteger(timestamp) || timestamp < 0 || timestamp > now()) {
+    throw httpError(400, `${label} must be a valid time that is not in the future.`);
+  }
+  return timestamp;
+}
+
 function serializeProduct(product) {
   const value = product.toObject ? product.toObject() : product;
   return {
@@ -462,6 +470,7 @@ router.get('/customers/:id/statement', asyncRoute(async (req, res) => {
 
 router.post('/payments/repayments', asyncRoute(async (req, res) => {
   const { idempotencyKey, customerId, amount, method, reference } = req.body;
+  const createdAt = parseRecordDate(req.body.createdAt, 'Payment date');
   if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) throw httpError(400, 'Idempotency key is required.');
   if (!isId(customerId)) throw httpError(400, 'Select a valid customer.');
   if (!Number.isSafeInteger(amount) || amount < 1) throw httpError(400, 'Amount must be a positive whole number.');
@@ -483,6 +492,7 @@ router.post('/payments/repayments', asyncRoute(async (req, res) => {
         amount,
         reference: typeof reference === 'string' ? reference.trim() || null : null,
         idempotencyKey: idempotencyKey.trim(),
+        created_at: createdAt,
       }], { session, ordered: true });
       await Customer.updateOne({ _id: customerId }, { $inc: { balance: -amount } }, { session });
       await Ledger.create([{
@@ -492,6 +502,7 @@ router.post('/payments/repayments', asyncRoute(async (req, res) => {
         ref_type: 'payment',
         ref_id: String(payment._id),
         note: `Repayment (${method})`,
+        created_at: createdAt,
       }], { session, ordered: true });
       return { payment, customerName: customer.name, balance: customer.balance - amount };
     });
@@ -512,10 +523,7 @@ router.post('/payments/repayments', asyncRoute(async (req, res) => {
 
 router.post('/sales', asyncRoute(async (req, res) => {
   const { idempotencyKey, items, customerId, customerName, payments = [], allowOverLimit = false } = req.body;
-  const createdAt = req.body.createdAt ?? now();
-  if (!Number.isSafeInteger(createdAt) || createdAt < 0 || createdAt > now()) {
-    throw httpError(400, 'Sale date must be a valid time that is not in the future.');
-  }
+  const createdAt = parseRecordDate(req.body.createdAt, 'Sale date');
   if (typeof idempotencyKey !== 'string' || !idempotencyKey.trim()) throw httpError(400, 'Idempotency key is required.');
   if (!Array.isArray(items) || items.length === 0) throw httpError(400, 'The cart is empty.');
   if (!Array.isArray(payments)) throw httpError(400, 'Payments must be a list.');
@@ -722,6 +730,7 @@ router.put('/sales/:id/payment', asyncRoute(async (req, res) => {
           ref_type: 'sale_adjustment',
           ref_id: String(current._id),
           note: `Payment adjusted for sale ${current.receipt_no}`,
+          created_at: now(),
         }], { session, ordered: true });
       }
 
@@ -765,10 +774,37 @@ router.put('/sales/:id/payment', asyncRoute(async (req, res) => {
   }
 }));
 
+router.put('/sales/:id/date', asyncRoute(async (req, res) => {
+  if (!isId(req.params.id)) throw httpError(400, 'Invalid sale ID.');
+  const createdAt = parseRecordDate(req.body.createdAt, 'Sale date');
+  const sale = await withTransaction(async (session) => {
+    const current = await Sale.findById(req.params.id).session(session);
+    if (!current) throw httpError(404, 'Sale not found.');
+    if (current.status !== 'completed') throw httpError(409, 'Cancelled sales cannot be edited.');
+    current.created_at = createdAt;
+    await current.save({ session });
+    await Payment.updateMany({ saleId: current._id }, { $set: { created_at: createdAt } }, { session });
+    await Ledger.updateMany(
+      { ref_type: 'sale', ref_id: String(current._id) },
+      { $set: { created_at: createdAt } },
+      { session }
+    );
+    await StockMovement.updateMany(
+      { refId: String(current._id) },
+      { $set: { created_at: createdAt } },
+      { session }
+    );
+    return current;
+  });
+  res.json({ sale: serializeSale(sale) });
+}));
+
 router.get('/sales', asyncRoute(async (req, res) => {
   const created_at = parseRange(req.query);
   const limit = Math.min(Math.max(Number.parseInt(req.query.limit ?? '30', 10) || 30, 1), 100);
-  const sales = await Sale.find({ created_at }).sort({ created_at: -1 }).limit(limit).lean();
+  const offset = Number.parseInt(req.query.offset ?? '0', 10);
+  if (!Number.isSafeInteger(offset) || offset < 0) throw httpError(400, 'Invalid sales offset.');
+  const sales = await Sale.find({ created_at }).sort({ created_at: -1, _id: -1 }).skip(offset).limit(limit).lean();
   res.json({ sales: sales.map(serializeSale) });
 }));
 
@@ -853,6 +889,7 @@ router.delete('/products/:id', asyncRoute(async (req, res) => {
 
 router.post('/expenses', asyncRoute(async (req, res) => {
   const { category, amount, method, note } = req.body;
+  const createdAt = parseRecordDate(req.body.createdAt, 'Expense date');
   if (typeof category !== 'string' || !category.trim()) throw httpError(400, 'Expense category is required.');
   if (!Number.isSafeInteger(amount) || amount < 1) throw httpError(400, 'Amount must be a positive whole number.');
   if (!METHODS.includes(method)) throw httpError(400, 'Invalid payment method.');
@@ -861,6 +898,7 @@ router.post('/expenses', asyncRoute(async (req, res) => {
     amount,
     method,
     note: typeof note === 'string' ? note.trim() || null : null,
+    created_at: createdAt,
   });
   void notifyAdmin('expenses', 'New expense recorded', `${expense.category}: FCFA ${expense.amount.toLocaleString()} (${expense.method})${expense.note ? `\n${expense.note}` : ''}.`);
   res.status(201).json({ expense: { ...expense.toObject(), id: String(expense._id) } });
@@ -869,6 +907,7 @@ router.post('/expenses', asyncRoute(async (req, res) => {
 router.put('/expenses/:id', asyncRoute(async (req, res) => {
   if (!isId(req.params.id)) throw httpError(400, 'Invalid expense ID.');
   const { category, amount, method, note } = req.body;
+  const createdAt = req.body.createdAt === undefined ? null : parseRecordDate(req.body.createdAt, 'Expense date');
   if (typeof category !== 'string' || !category.trim()) throw httpError(400, 'Expense category is required.');
   if (!Number.isSafeInteger(amount) || amount < 1) throw httpError(400, 'Amount must be a positive whole number.');
   if (!METHODS.includes(method)) throw httpError(400, 'Invalid payment method.');
@@ -879,8 +918,16 @@ router.put('/expenses/:id', asyncRoute(async (req, res) => {
   expense.amount = amount;
   expense.method = method;
   expense.note = typeof note === 'string' ? note.trim() || null : null;
+  if (createdAt !== null) expense.created_at = createdAt;
   await expense.save();
   void notifyAdmin('expenses', 'Expense updated', `${expense.category}: FCFA ${expense.amount.toLocaleString()} (${expense.method})${expense.note ? `\n${expense.note}` : ''}.`);
+  res.json({ expense: { ...expense.toObject(), id: String(expense._id) } });
+}));
+
+router.delete('/expenses/:id', asyncRoute(async (req, res) => {
+  if (!isId(req.params.id)) throw httpError(400, 'Invalid expense ID.');
+  const expense = await Expense.findByIdAndDelete(req.params.id);
+  if (!expense) throw httpError(404, 'Expense not found.');
   res.json({ expense: { ...expense.toObject(), id: String(expense._id) } });
 }));
 

@@ -1,8 +1,9 @@
 import React, { useRef, useState } from 'react';
-import { ScrollView, View, Text, Alert, StyleSheet, Keyboard, Modal } from 'react-native';
+import { ScrollView, View, Text, Alert, StyleSheet, Keyboard, Modal, Pressable } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Hero, Card, Btn, Chip, Field, Section, Avatar, IconDot, Money, Empty, useLoad, ScreenShimmer, screenStyle, body } from '../../src/components/ui';
 import KeyboardSheet from '../../src/components/KeyboardSheet';
+import CalendarPicker, { localDateInput, localDateTimestamp, prettyDate } from '../../src/components/CalendarPicker';
 import { getCustomer, getStatement, recordRepayment, updateCustomer, deleteCustomer } from '../../src/api/repo';
 import { fcfa, parseAmount, fmtDateTime, uid } from '../../src/utils';
 import { colors, METHODS, METHOD_ICONS } from '../../src/theme';
@@ -23,6 +24,8 @@ export default function CustomerDetail() {
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('Cash');
   const [ref, setRef] = useState('');
+  const [repaymentDate, setRepaymentDate] = useState(localDateInput());
+  const [repaymentCalOpen, setRepaymentCalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const keyRef = useRef(uid());
 
@@ -47,14 +50,19 @@ export default function CustomerDetail() {
 
   async function save() {
     if (busy) return;
+    const createdAt = localDateTimestamp(repaymentDate);
+    if (createdAt === null || createdAt > Date.now()) {
+      Alert.alert('Invalid payment date', 'Pick a valid date that is not in the future.');
+      return;
+    }
     Keyboard.dismiss();
     setBusy(true);
     try {
       await recordRepayment({
-        idempotencyKey: keyRef.current, customerId: id, amount: parseAmount(amount), method, reference: ref,
+        idempotencyKey: keyRef.current, customerId: id, amount: parseAmount(amount), method, reference: ref, createdAt,
       });
       keyRef.current = uid();
-      setAmount(''); setRef(''); setOpen(false);
+      setAmount(''); setRef(''); setOpen(false); setRepaymentCalOpen(false); setRepaymentDate(localDateInput());
       reload();
     } catch (e) {
       Alert.alert('Cannot record repayment', e.message);
@@ -121,7 +129,11 @@ export default function CustomerDetail() {
       </Hero>
 
       <View style={body}>
-        <Btn variant="gold" icon="cash" title="Record repayment" onPress={() => setOpen(true)} disabled={c.balance <= 0} />
+        <Btn variant="gold" icon="cash" title="Record repayment" onPress={() => {
+          setRepaymentDate(localDateInput());
+          setRepaymentCalOpen(false);
+          setOpen(true);
+        }} disabled={c.balance <= 0} />
         {c.notes ? (
           <Card style={{ marginTop: 14, flexDirection: 'row' }}>
             <IconDot name="document-text-outline" size={34} />
@@ -163,6 +175,20 @@ export default function CustomerDetail() {
         </Card>
         <Field label="Amount (FCFA)" keyboardType="number-pad" value={amount} onChangeText={setAmount} inputStyle={{ fontSize: 22, fontWeight: '800', minHeight: 58 }} />
         <Btn small variant="soft" title="Pay full balance" onPress={() => setAmount(String(c.balance))} style={{ marginBottom: 16, alignSelf: 'flex-start' }} />
+        <Text style={s.label}>Payment date</Text>
+        <Pressable
+          onPress={() => { Keyboard.dismiss(); setRepaymentCalOpen((value) => !value); }}
+          style={[s.dateButton, repaymentCalOpen && { borderColor: colors.gold }]}
+        >
+          <IconDot name="calendar-outline" size={34} />
+          <View style={{ flex: 1, marginLeft: 10 }}>
+            <Text style={{ color: colors.muted, fontSize: 11, fontWeight: '700' }}>SELECTED DAY</Text>
+            <Text style={{ color: colors.ink, fontSize: 15, fontWeight: '800', marginTop: 2 }}>{prettyDate(repaymentDate)}</Text>
+          </View>
+        </Pressable>
+        {repaymentCalOpen ? (
+          <CalendarPicker value={repaymentDate} onChange={(value) => { setRepaymentDate(value); setRepaymentCalOpen(false); }} />
+        ) : null}
         <Text style={s.label}>Method</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 8, marginBottom: 14 }}>
           {METHODS.map((m) => <Chip key={m} icon={METHOD_ICONS[m]} label={m} active={method === m} onPress={() => setMethod(m)} />)}
@@ -210,6 +236,7 @@ const s = StyleSheet.create({
   itemSub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   itemAmt: { fontSize: 15, fontWeight: '800' },
   label: { fontSize: 13, color: colors.muted, marginBottom: 8, fontWeight: '600' },
+  dateButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: colors.line, padding: 10, marginBottom: 14 },
   deleteSheet: { padding: 22, borderRadius: 20, width: '86%', alignItems: 'center' },
   deleteTitle: { fontSize: 18, fontWeight: '800', color: colors.ink, marginBottom: 8 },
   deleteSub: { color: colors.muted, textAlign: 'center', marginBottom: 16 },

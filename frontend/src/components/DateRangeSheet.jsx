@@ -60,7 +60,7 @@ const countDays = (a, b) => Math.round((b - a) / 86400000) + 1;
 
 function Day({ ms, start, end, today, onPress }) {
   if (!ms) return <View style={s.cell} />;
-  const last = end ?? start;
+  const last = singleDate ? start : end ?? start;
   const disabled = ms > today;
   const isStart = ms === start;
   const isEnd = ms === last;
@@ -83,7 +83,7 @@ function Day({ ms, start, end, today, onPress }) {
 
 /* ----------------------------------- sheet ----------------------------------- */
 
-export default function DateRangeSheet({ visible, from, to, onApply, onClose }) {
+export default function DateRangeSheet({ visible, from, to, onApply, onClose, singleDate = false }) {
   const [start, setStart] = useState(from);
   const [end, setEnd] = useState(to);
   const [view, setView] = useState(new Date(from));
@@ -92,10 +92,10 @@ export default function DateRangeSheet({ visible, from, to, onApply, onClose }) 
   useEffect(() => {
     if (visible) {
       setStart(from);
-      setEnd(from === to ? null : to);
+      setEnd(singleDate || from === to ? null : to);
       setView(new Date(from));
     }
-  }, [visible, from, to]);
+  }, [visible, from, to, singleDate]);
 
   const y = view.getFullYear();
   const m = view.getMonth();
@@ -111,6 +111,11 @@ export default function DateRangeSheet({ visible, from, to, onApply, onClose }) 
   const shift = (n) => setView(new Date(y, m + n, 1));
 
   function pick(ms) {
+    if (singleDate) {
+      setStart(ms);
+      setEnd(null);
+      return;
+    }
     if (!start || (start && end)) { setStart(ms); setEnd(null); }
     else if (ms < start) setStart(ms);
     else setEnd(ms);
@@ -127,10 +132,12 @@ export default function DateRangeSheet({ visible, from, to, onApply, onClose }) 
   const activeKey = start ? presetFor(start, last) : null;
 
   return (
-    <Sheet visible={visible} title="Select dates" onClose={onClose}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
-        {Object.keys(PRESETS).map((k) => <Chip key={k} label={k} active={activeKey === k} onPress={() => preset(k)} />)}
-      </ScrollView>
+    <Sheet visible={visible} title={singleDate ? 'Select a day' : 'Select dates'} onClose={onClose}>
+      {!singleDate && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14 }}>
+          {Object.keys(PRESETS).map((k) => <Chip key={k} label={k} active={activeKey === k} onPress={() => preset(k)} />)}
+        </ScrollView>
+      )}
 
       <View style={s.card}>
         <View style={s.monthRow}>

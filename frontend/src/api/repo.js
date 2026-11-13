@@ -204,7 +204,7 @@ export async function getStatement(customerId) {
   );
 }
 
-export async function recordRepayment({ idempotencyKey, customerId, amount, method, reference }) {
+export async function recordRepayment({ idempotencyKey, customerId, amount, method, reference, createdAt }) {
   if (!(amount > 0)) throw new Error('Enter an amount greater than 0');
   return post('/payments/repayments', {
     idempotencyKey,
@@ -212,6 +212,7 @@ export async function recordRepayment({ idempotencyKey, customerId, amount, meth
     amount,
     method,
     reference: reference || null,
+    ...(typeof createdAt === 'number' ? { createdAt } : {}),
   });
 }
 
@@ -239,22 +240,39 @@ export async function updateSalePayment(saleId, { paidAmount, method, idempotenc
   return normalizeSale(result);
 }
 
+export async function updateSaleDate(saleId, createdAt) {
+  if (!saleId) throw new Error('Sale ID is required');
+  if (!Number.isSafeInteger(createdAt) || createdAt < 0) throw new Error('Pick a valid sale date');
+  const result = entity(await put(`/sales/${encodeURIComponent(saleId)}/date`, { createdAt }), 'sale');
+  return normalizeSale(result);
+}
+
 export async function cancelSale(saleId, reason) {
   if (!reason?.trim()) throw new Error('A cancellation reason is required');
   return post(`/sales/${encodeURIComponent(saleId)}/cancel`, { reason: reason.trim() });
 }
 
-export async function getRecentSales(limit = 30, from = 0, to = Date.now()) {
-  const params = new URLSearchParams({ limit: String(limit), from: String(from), to: String(to) });
+export async function getRecentSales(limit = 30, from = 0, to = Date.now(), offset = 0) {
+  const params = new URLSearchParams({ limit: String(limit), from: String(from), to: String(to), offset: String(offset) });
   return collection(await get(`/sales?${params.toString()}`), 'sales').map(normalizeSale);
 }
 
-export async function addExpense({ category, amount, method, note }) {
-  if (!(amount > 0)) throw new Error('Enter an amount greater than 0');
-  return post('/expenses', { category, amount, method, note: note || null });
+export async function getAllSales(from, to) {
+  const pageSize = 100;
+  const sales = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await getRecentSales(pageSize, from, to, offset);
+    sales.push(...page);
+    if (page.length < pageSize) return sales;
+  }
 }
 
-export async function updateExpense(expenseId, { category, amount, method, note }) {
+export async function addExpense({ category, amount, method, note, createdAt }) {
+  if (!(amount > 0)) throw new Error('Enter an amount greater than 0');
+  return post('/expenses', { category, amount, method, note: note || null, createdAt });
+}
+
+export async function updateExpense(expenseId, { category, amount, method, note, createdAt }) {
   if (!expenseId) throw new Error('Expense ID is required');
   if (!category?.trim()) throw new Error('Expense category is required');
   if (!Number.isSafeInteger(amount) || amount < 1) throw new Error('Enter a positive whole-number amount');
@@ -264,7 +282,13 @@ export async function updateExpense(expenseId, { category, amount, method, note 
     amount,
     method,
     note: note || null,
+    createdAt,
   }), 'expense');
+}
+
+export async function deleteExpense(expenseId) {
+  if (!expenseId) throw new Error('Expense ID is required');
+  return request(`/expenses/${encodeURIComponent(expenseId)}`, { method: 'DELETE' });
 }
 
 export async function getReport(from, to) {

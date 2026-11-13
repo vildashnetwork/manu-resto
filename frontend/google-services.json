@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "299437385188",
+    "project_id": "phibmat-a468d",
+    "storage_bucket": "phibmat-a468d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:299437385188:android:832f8cd99c8d579e3c53f1",
+        "android_client_info": {
+          "package_name": "com.manusresto.manager"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "299437385188-fo9obs181u9kt37jc79eg9gsruks2pf6.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDLYV1t30PCMTcdOdXFpS_izLnv8L0-7rs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "299437385188-fo9obs181u9kt37jc79eg9gsruks2pf6.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -8,7 +8,8 @@ import {
 } from '../../src/components/ui';
 import KeyboardSheet from '../../src/components/KeyboardSheet';
 import DateRangeSheet, { PRESETS, presetFor, rangeLabel, dayEnd } from '../../src/components/DateRangeSheet';
-import { getReport, getRecentSales, addExpense, updateExpense, cancelSale, updateSalePayment, getProducts, getCustomers, createSale } from '../../src/api/repo';
+import CalendarPicker, { localDateInput, localDateTimestamp, prettyDate } from '../../src/components/CalendarPicker';
+import { getReport, getRecentSales, getAllSales, addExpense, updateExpense, deleteExpense, cancelSale, updateSalePayment, updateSaleDate, getProducts, getCustomers, createSale } from '../../src/api/repo';
 import { getReportLogoDataUri, buildSalesReportHtml, buildSaleReceiptHtml, savePdf, printHtml, safeFilePart } from '../../src/reports/salesReportPdf';
 import { matchProduct, scanBookPages } from '../../src/api/scanBook';
 import { fcfa, num, parseAmount, fmtDateTime, uid } from '../../src/utils';
@@ -23,10 +24,6 @@ const PERIOD_TITLE = {
   'This month': 'Monthly sales report',
   'Last month': 'Monthly sales report',
 };
-
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const WEEKDAYS_LONG = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function FlowRow({ label, value, sign, color, bold, icon }) {
   return (
@@ -45,34 +42,6 @@ function Mini({ label, value }) {
       <Money value={value} size={15} color="#fff" />
     </View>
   );
-}
-
-function pad2(value) {
-  return String(value).padStart(2, '0');
-}
-
-function toDateInput(year, month, day) {
-  return `${year}-${pad2(month + 1)}-${pad2(day)}`;
-}
-
-function localDateInput(date = new Date()) {
-  return toDateInput(date.getFullYear(), date.getMonth(), date.getDate());
-}
-
-function localDateTimestamp(value) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return null;
-  const [, year, month, day] = match;
-  const date = new Date(Number(year), Number(month) - 1, Number(day));
-  if (date.getFullYear() !== Number(year) || date.getMonth() !== Number(month) - 1 || date.getDate() !== Number(day)) return null;
-  return date.getTime();
-}
-
-function prettyDate(value) {
-  const ts = localDateTimestamp(value);
-  if (ts === null) return 'Pick a date';
-  const d = new Date(ts);
-  return `${WEEKDAYS_LONG[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 function plainText(value) {
@@ -104,82 +73,10 @@ function checkDraft(sale, products, customers) {
   return { ...sale, customerId: customer?.id || '', lines, total, paid, issues };
 }
 
-// Simple month calendar. Future days are disabled because a sale cannot be recorded in the future.
-function CalendarPicker({ value, onChange }) {
-  const selectedTs = localDateTimestamp(value);
-  const start = selectedTs !== null ? new Date(selectedTs) : new Date();
-  const [view, setView] = useState({ y: start.getFullYear(), m: start.getMonth() });
-
-  const now = new Date();
-  const todayTs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const nextDisabled = view.y > now.getFullYear() || (view.y === now.getFullYear() && view.m >= now.getMonth());
-
-  const firstOffset = (new Date(view.y, view.m, 1).getDay() + 6) % 7; // week starts on Monday
-  const daysInMonth = new Date(view.y, view.m + 1, 0).getDate();
-  const cells = [];
-  for (let i = 0; i < firstOffset; i += 1) cells.push(null);
-  for (let day = 1; day <= daysInMonth; day += 1) cells.push(day);
-  while (cells.length % 7 !== 0) cells.push(null);
-  const weeks = [];
-  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
-
-  function shift(delta) {
-    setView((current) => {
-      const d = new Date(current.y, current.m + delta, 1);
-      return { y: d.getFullYear(), m: d.getMonth() };
-    });
-  }
-
-  return (
-    <View style={s.cal}>
-      <View style={s.calHead}>
-        <Pressable onPress={() => shift(-1)} hitSlop={10} style={s.calNav}>
-          <Ionicons name="chevron-back" size={20} color={colors.ink} />
-        </Pressable>
-        <Text style={s.calTitle}>{MONTHS[view.m]} {view.y}</Text>
-        <Pressable onPress={() => shift(1)} disabled={nextDisabled} hitSlop={10} style={[s.calNav, nextDisabled && { opacity: 0.3 }]}>
-          <Ionicons name="chevron-forward" size={20} color={colors.ink} />
-        </Pressable>
-      </View>
-
-      <View style={s.calRow}>
-        {WEEKDAYS.map((w) => <Text key={w} style={s.calWeekday}>{w}</Text>)}
-      </View>
-
-      {weeks.map((week, wi) => (
-        <View key={wi} style={s.calRow}>
-          {week.map((day, di) => {
-            if (day === null) return <View key={di} style={s.calCell} />;
-            const ts = new Date(view.y, view.m, day).getTime();
-            const disabled = ts > todayTs;
-            const selected = ts === selectedTs;
-            const isToday = ts === todayTs;
-            return (
-              <View key={di} style={s.calCell}>
-                <Pressable
-                  disabled={disabled}
-                  onPress={() => onChange(toDateInput(view.y, view.m, day))}
-                  style={({ pressed }) => [
-                    s.calDay,
-                    isToday && !selected && s.calDayToday,
-                    selected && s.calDaySelected,
-                    pressed && !selected && { backgroundColor: colors.goldTint },
-                  ]}
-                >
-                  <Text style={[s.calDayText, disabled && s.calDayTextDisabled, selected && s.calDayTextSelected]}>{day}</Text>
-                </Pressable>
-              </View>
-            );
-          })}
-        </View>
-      ))}
-    </View>
-  );
-}
-
 export default function Reports() {
   const [range, setRange] = useState(() => { const [a, b] = PRESETS.Today(); return { from: a, to: b }; });
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerSingleDate, setPickerSingleDate] = useState(false);
   const [d, reload, loading] = useLoad(async () => {
     const from = range.from;
     const to = dayEnd(range.to);
@@ -192,12 +89,17 @@ export default function Reports() {
   const [expMethod, setExpMethod] = useState('Cash');
   const [expAmt, setExpAmt] = useState('');
   const [expNote, setExpNote] = useState('');
+  const [expDate, setExpDate] = useState(localDateInput());
+  const [expCalOpen, setExpCalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [cancelId, setCancelId] = useState(null);
   const [reason, setReason] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('All');
   const [editingSale, setEditingSale] = useState(null);
+  const [editingSaleDate, setEditingSaleDate] = useState(null);
   const [paidInput, setPaidInput] = useState('');
+  const [saleDate, setSaleDate] = useState(localDateInput());
+  const [saleCalOpen, setSaleCalOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -229,14 +131,14 @@ export default function Reports() {
 
   async function exportReport(share = false) {
     const report = d?.report;
-    if (!report || exporting) return;
+    if (!report || loading || exporting) return;
     setExporting(true);
     try {
       const label = rangeLabel(range.from, range.to);
       // fetch the full list of sales for the period (the screen only loads the latest 100)
       const [logoUri, allSales] = await Promise.all([
         getReportLogoDataUri(),
-        getRecentSales(2000, range.from, dayEnd(range.to)),
+        getAllSales(range.from, dayEnd(range.to)),
       ]);
       const html = buildSalesReportHtml({
         logoUri, title: periodTitle, periodLabel: label, report, sales: allSales,
@@ -252,13 +154,18 @@ export default function Reports() {
 
   async function saveExpense() {
     if (busy) return;
+    const createdAt = localDateTimestamp(expDate);
+    if (createdAt === null || createdAt > Date.now()) {
+      Alert.alert('Invalid expense date', 'Pick a valid date that is not in the future.');
+      return;
+    }
     Keyboard.dismiss();
     setBusy(true);
     try {
-      const expense = { category: expCat, amount: parseAmount(expAmt), method: expMethod, note: expNote };
+      const expense = { category: expCat, amount: parseAmount(expAmt), method: expMethod, note: expNote, createdAt };
       if (editingExpense) await updateExpense(editingExpense.id, expense);
       else await addExpense(expense);
-      setExpAmt(''); setExpNote(''); setExpOpen(false); setEditingExpense(null); reload();
+      setExpAmt(''); setExpNote(''); setExpOpen(false); setEditingExpense(null); setExpCalOpen(false); reload();
     } catch (e) { Alert.alert(editingExpense ? 'Cannot update expense' : 'Cannot save expense', e.message); } finally { setBusy(false); }
   }
 
@@ -268,13 +175,37 @@ export default function Reports() {
     setExpMethod(expense.method);
     setExpAmt(String(expense.amount));
     setExpNote(expense.note || '');
+    setExpDate(localDateInput(new Date(expense.created_at)));
+    setExpCalOpen(false);
     setExpOpen(true);
+  }
+
+  function confirmDeleteExpense(expense) {
+    Alert.alert('Delete expense?', `Delete the ${expense.category} expense of ${fcfa(expense.amount)}?`, [
+      { text: 'Keep', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          setBusy(true);
+          try {
+            await deleteExpense(expense.id);
+            reload();
+          } catch (e) {
+            Alert.alert('Cannot delete expense', e.message);
+          } finally {
+            setBusy(false);
+          }
+        },
+      },
+    ]);
   }
 
   function closeExpenseEditor() {
     if (busy) return;
     setExpOpen(false);
     setEditingExpense(null);
+    setExpCalOpen(false);
   }
 
   async function doCancel() {
@@ -297,7 +228,10 @@ export default function Reports() {
     Keyboard.dismiss();
     setBusy(true);
     try {
-      await updateSalePayment(editingSale.id, { paidAmount, method: paymentMethod, idempotencyKey: `report-edit-${editingSale.id}-${Date.now()}` });
+      await updateSalePayment(editingSale.id, {
+        paidAmount, method: paymentMethod,
+        idempotencyKey: `report-edit-${editingSale.id}-${Date.now()}`,
+      });
       setEditingSale(null);
       reload();
     } catch (e) {
@@ -572,6 +506,39 @@ export default function Reports() {
   }
 
   const quick = (key) => { const [a, b] = PRESETS[key](); setRange({ from: a, to: b }); };
+  const openRangePicker = (singleDate) => {
+    setPickerSingleDate(singleDate);
+    setPickerOpen(true);
+  };
+  const openSaleEditor = (sale) => {
+    setEditingSale(sale);
+    setPaidInput(String(sale.paid_amount || 0));
+    setPaymentMethod('Cash');
+  };
+  const openSaleDateEditor = (sale) => {
+    setEditingSaleDate(sale);
+    setSaleDate(localDateInput(new Date(sale.created_at)));
+    setSaleCalOpen(false);
+  };
+  async function saveSaleDate() {
+    if (!editingSaleDate || busy) return;
+    const createdAt = localDateTimestamp(saleDate);
+    if (createdAt === null || createdAt > Date.now()) {
+      Alert.alert('Invalid sale date', 'Pick a valid date that is not in the future.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await updateSaleDate(editingSaleDate.id, createdAt);
+      setEditingSaleDate(null);
+      setSaleCalOpen(false);
+      reload();
+    } catch (e) {
+      Alert.alert('Cannot update sale date', e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const r = d?.report;
   const visibleSales = (d?.sales ?? []).filter((x) =>
@@ -602,7 +569,7 @@ export default function Reports() {
   return (
     <ScrollView style={screenStyle} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
       <Hero eyebrow="Business summary" title="Reports">
-        <Pressable onPress={() => setPickerOpen(true)} style={({ pressed }) => [s.rangeBtn, { opacity: pressed ? 0.85 : 1 }]}>
+        <Pressable onPress={() => openRangePicker(false)} style={({ pressed }) => [s.rangeBtn, { opacity: pressed ? 0.85 : 1 }]}>
           <Ionicons name="calendar" size={18} color={colors.gold} />
           <Text style={s.rangeText} numberOfLines={1}>{rangeLabel(range.from, range.to)}</Text>
           <Text style={s.rangeChange}>Change</Text>
@@ -615,9 +582,13 @@ export default function Reports() {
               <Text style={[s.qText, activeKey === k && { color: colors.forestDark }]}>{k}</Text>
             </Pressable>
           ))}
-          <Pressable onPress={() => setPickerOpen(true)} style={[s.qChip, !activeKey && s.qChipActive]}>
-            <Ionicons name="options-outline" size={14} color={!activeKey ? colors.forestDark : '#fff'} style={{ marginRight: 5 }} />
-            <Text style={[s.qText, !activeKey && { color: colors.forestDark }]}>Custom</Text>
+          <Pressable onPress={() => openRangePicker(false)} style={[s.qChip, !activeKey && range.from !== range.to && s.qChipActive]}>
+            <Ionicons name="options-outline" size={14} color={!activeKey && range.from !== range.to ? colors.forestDark : '#fff'} style={{ marginRight: 5 }} />
+            <Text style={[s.qText, !activeKey && range.from !== range.to && { color: colors.forestDark }]}>Custom range</Text>
+          </Pressable>
+          <Pressable onPress={() => openRangePicker(true)} style={[s.qChip, !activeKey && range.from === range.to && s.qChipActive]}>
+            <Ionicons name="calendar-outline" size={14} color={!activeKey && range.from === range.to ? colors.forestDark : '#fff'} style={{ marginRight: 5 }} />
+            <Text style={[s.qText, !activeKey && range.from === range.to && { color: colors.forestDark }]}>Pick a day</Text>
           </Pressable>
         </ScrollView>
 
@@ -670,8 +641,8 @@ export default function Reports() {
               </View>
             </View>
             <View style={s.pdfActions}>
-              <Btn small variant="gold" icon="download-outline" title={exporting ? 'Preparing…' : 'Download PDF'} style={{ flex: 1 }} onPress={() => exportReport(false)} disabled={exporting} />
-              <Btn small variant="soft" icon="share-social-outline" title="Share" style={{ flex: 1 }} onPress={() => exportReport(true)} disabled={exporting} />
+              <Btn small variant="gold" icon="download-outline" title={exporting ? 'Preparing…' : 'Download PDF'} style={{ flex: 1 }} onPress={() => exportReport(false)} disabled={exporting || loading} />
+              <Btn small variant="soft" icon="share-social-outline" title="Share" style={{ flex: 1 }} onPress={() => exportReport(true)} disabled={exporting || loading} />
             </View>
             <Text style={s.fine}>Pick Today for a daily report, 7 days for weekly, This month for monthly, or any custom dates.</Text>
           </Card>
@@ -760,6 +731,8 @@ export default function Reports() {
             setExpMethod('Cash');
             setExpAmt('');
             setExpNote('');
+            setExpDate(localDateInput());
+            setExpCalOpen(false);
             setExpOpen(true);
           }}>
             <Card style={{ paddingVertical: 4 }}>
@@ -773,16 +746,28 @@ export default function Reports() {
                   </View>
                   <View style={s.expenseActions}>
                     <Text style={s.expenseAmount}>−{fcfa(e.amount)}</Text>
-                    <Pressable
-                      onPress={() => editExpense(e)}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Edit ${e.category} expense`}
-                      hitSlop={8}
-                      style={s.expenseEdit}
-                    >
-                      <Ionicons name="create-outline" size={18} color={colors.forest} />
-                      <Text style={s.expenseEditText}>Edit</Text>
-                    </Pressable>
+                    <View style={{ flexDirection: 'row', gap: 5 }}>
+                      <Pressable
+                        onPress={() => editExpense(e)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Edit ${e.category} expense`}
+                        hitSlop={8}
+                        style={s.expenseEdit}
+                      >
+                        <Ionicons name="create-outline" size={17} color={colors.forest} />
+                        <Text style={s.expenseEditText}>Edit</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => confirmDeleteExpense(e)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Delete ${e.category} expense`}
+                        hitSlop={8}
+                        style={[s.expenseEdit, { backgroundColor: colors.dangerTint }]}
+                      >
+                        <Ionicons name="trash-outline" size={17} color={colors.danger} />
+                        <Text style={[s.expenseEditText, { color: colors.danger }]}>Delete</Text>
+                      </Pressable>
+                    </View>
                   </View>
                 </View>
               ))}
@@ -814,8 +799,10 @@ export default function Reports() {
                   {!cancelled && (
                     <>
                       <View style={s.saleActions}>
-                        <Btn small variant="soft" icon="create-outline" title="Edit paid" style={{ flex: 1 }}
-                          onPress={() => { setEditingSale(x); setPaidInput(String(x.paid_amount || 0)); setPaymentMethod('Cash'); }} />
+                        <Btn small variant="soft" icon="cash-outline" title="Edit paid" style={{ flex: 1 }}
+                          onPress={() => openSaleEditor(x)} />
+                        <Btn small variant="soft" icon="calendar-outline" title="Edit date" style={{ flex: 1 }}
+                          onPress={() => openSaleDateEditor(x)} />
                         <Btn small variant="dangerSoft" icon="close-circle-outline" title="Cancel" style={{ flex: 1 }} onPress={() => setCancelId(x.id)} />
                       </View>
                       <View style={s.receiptActions}>
@@ -839,8 +826,13 @@ export default function Reports() {
         visible={pickerOpen}
         from={range.from}
         to={range.to}
+        singleDate={pickerSingleDate}
         onClose={() => setPickerOpen(false)}
-        onApply={(a, b) => { setRange({ from: a, to: b }); setPickerOpen(false); }}
+        onApply={(a, b) => {
+          setRange({ from: a, to: pickerSingleDate ? a : b });
+          setPickerOpen(false);
+          setPickerSingleDate(false);
+        }}
       />
 
       {/* ---------- Scan the sales book ---------- */}
@@ -1163,6 +1155,32 @@ export default function Reports() {
         />
       </KeyboardSheet>
 
+      <KeyboardSheet visible={!!editingSaleDate} title="Edit sale date" onClose={() => { setEditingSaleDate(null); setSaleCalOpen(false); }}>
+        <Card style={{ marginBottom: 16 }}>
+          <Text style={{ color: colors.muted, fontWeight: '600' }}>{editingSaleDate?.receipt_no}</Text>
+          <Text style={{ color: colors.ink, fontWeight: '700', marginTop: 4 }}>{editingSaleDate?.customer_name || 'Walk-in'}</Text>
+        </Card>
+        <Text style={s.cap}>Sale date</Text>
+        <Pressable
+          onPress={() => { Keyboard.dismiss(); setSaleCalOpen((value) => !value); }}
+          style={({ pressed }) => [s.dateBtn, saleCalOpen && s.dateBtnOpen, pressed && { opacity: 0.85 }]}
+        >
+          <View style={s.dateIcon}><Ionicons name="calendar" size={18} color={colors.forestDark} /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.dateBtnLabel}>Selected day</Text>
+            <Text style={s.dateBtnValue}>{prettyDate(saleDate)}</Text>
+          </View>
+          <Ionicons name={saleCalOpen ? 'chevron-up' : 'chevron-down'} size={18} color={colors.muted} />
+        </Pressable>
+        {saleCalOpen ? (
+          <CalendarPicker value={saleDate} onChange={(value) => { setSaleDate(value); setSaleCalOpen(false); }} />
+        ) : null}
+        <Text style={{ color: colors.muted, fontSize: 12, marginTop: 10, marginBottom: 14 }}>
+          The sale, its recorded payments, customer ledger entry, and stock movement dates will be updated together.
+        </Text>
+        <Btn icon="checkmark-circle" title={busy ? 'Saving…' : 'Save sale date'} onPress={saveSaleDate} disabled={busy} />
+      </KeyboardSheet>
+
       <KeyboardSheet visible={!!editingSale} title="Edit amount paid" onClose={() => setEditingSale(null)}>
         <Card style={{ marginBottom: 16 }}>
           <Text style={{ color: colors.muted, fontWeight: '600' }}>{editingSale?.receipt_no}</Text>
@@ -1186,6 +1204,21 @@ export default function Reports() {
       </KeyboardSheet>
 
       <KeyboardSheet visible={expOpen} title={editingExpense ? 'Edit expense' : 'New expense'} onClose={closeExpenseEditor}>
+        <Text style={s.cap}>Expense date</Text>
+        <Pressable
+          onPress={() => { Keyboard.dismiss(); setExpCalOpen((value) => !value); }}
+          style={({ pressed }) => [s.dateBtn, expCalOpen && s.dateBtnOpen, pressed && { opacity: 0.85 }]}
+        >
+          <View style={s.dateIcon}><Ionicons name="calendar" size={18} color={colors.forestDark} /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.dateBtnLabel}>Selected day</Text>
+            <Text style={s.dateBtnValue}>{prettyDate(expDate)}</Text>
+          </View>
+          <Ionicons name={expCalOpen ? 'chevron-up' : 'chevron-down'} size={18} color={colors.muted} />
+        </Pressable>
+        {expCalOpen ? (
+          <CalendarPicker value={expDate} onChange={(value) => { setExpDate(value); setExpCalOpen(false); }} />
+        ) : null}
         <Text style={s.cap}>Category</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 8, marginBottom: 14 }}>
           {EXPENSE_CATEGORIES.map((c) => <Chip key={c} label={c} active={expCat === c} onPress={() => setExpCat(c)} />)}
@@ -1275,23 +1308,6 @@ const s = StyleSheet.create({
   },
   dateBtnLabel: { fontSize: 11, color: colors.muted, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
   dateBtnValue: { fontSize: 16, color: colors.ink, fontWeight: '800', marginTop: 2 },
-
-  cal: {
-    marginTop: 10, backgroundColor: '#fff', borderRadius: 16, borderWidth: 1, borderColor: colors.line,
-    paddingHorizontal: 8, paddingVertical: 10,
-  },
-  calHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4, marginBottom: 8 },
-  calNav: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F4F1E8', alignItems: 'center', justifyContent: 'center' },
-  calTitle: { fontSize: 16, fontWeight: '800', color: colors.ink },
-  calRow: { flexDirection: 'row' },
-  calWeekday: { flex: 1, textAlign: 'center', fontSize: 11, fontWeight: '700', color: colors.muted, paddingVertical: 6 },
-  calCell: { flex: 1, aspectRatio: 1, alignItems: 'center', justifyContent: 'center', padding: 2 },
-  calDay: { width: '100%', height: '100%', borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
-  calDayToday: { borderWidth: 1.5, borderColor: colors.gold },
-  calDaySelected: { backgroundColor: colors.gold },
-  calDayText: { fontSize: 15, fontWeight: '700', color: colors.ink },
-  calDayTextDisabled: { color: colors.muted, opacity: 0.35 },
-  calDayTextSelected: { color: colors.forestDark, fontWeight: '900' },
 
   cap: { fontSize: 12, fontWeight: '800', color: colors.muted, textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 12 },
   split: { flexDirection: 'row', height: 14, borderRadius: 7, overflow: 'hidden', backgroundColor: '#EFEBE0' },

@@ -39,7 +39,8 @@
     ],
     "android": {
       "package": "com.manusresto.manager",
-      "versionCode": 35,
+      "googleServicesFile": "./google-services.json",
+      "versionCode": 36,
       "adaptiveIcon": {
         "foregroundImage": "./public/nobglogo.png",
         "backgroundColor": "#0B3827"

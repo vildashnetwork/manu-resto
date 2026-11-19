@@ -1,7 +1,6 @@
 // website/src/api.js
-// Set VITE_API_URL (and optionally VITE_API_KEY) in Vercel project settings.
-const BASE_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/+$/, '');
-const API_KEY = import.meta.env.VITE_API_KEY || '';
+const BASE_URL = 'https://manu-ltx7.onrender.com';
+const API_KEY = ''; // optional: put your API key here if your server requires one
 
 /* ---------- low-level helpers ---------- */
 
@@ -34,7 +33,7 @@ async function request(method, path, { body, query } = {}) {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new Error(`Cannot reach the API (${method} ${BASE_URL}${path}). Check VITE_API_URL and the server's CORS_ORIGIN.`);
+    throw new Error(`Cannot reach the API (${method} ${BASE_URL}${path}). Check that the server is running and its CORS_ORIGIN allows this website.`);
   }
 
   let payload = null;
@@ -49,9 +48,9 @@ async function request(method, path, { body, query } = {}) {
     error.details = payload?.details; // e.g. { balance, limit, credit }
     throw error;
   }
-  // A 200 that is not JSON usually means VITE_API_URL points at the website instead of the API.
+  // A 200 that is not JSON usually means the base URL points at a web page instead of the API.
   if (text && payload && typeof payload === 'object' && !Array.isArray(payload) && Object.keys(payload).length === 1 && typeof payload.message === 'string' && /^\s*</.test(payload.message)) {
-    throw new Error(`The API URL returned a web page, not JSON (${method} ${BASE_URL}${path}). Set VITE_API_URL to your backend, e.g. https://your-api.example.com/api`);
+    throw new Error(`The API URL returned a web page, not JSON (${method} ${BASE_URL}${path}). Check BASE_URL in api.js (you may need to add /api at the end).`);
   }
   return payload;
 }

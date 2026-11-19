@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { CalendarDays, Check, X } from 'lucide-react';
 import { cancelSale, getRecentSales, money, startOfDay, endOfDay, updateSalePayment } from './api.js';
 
@@ -19,18 +19,30 @@ export default function ReportsSalesHistory({ date, onDateChange, reload }) {
   const [busy, setBusy] = useState(false);
   const selectedDate = date ? new Date(`${date}T00:00:00`) : new Date();
 
-  async function loadSales() {
-    setLoading(true);
-    try {
-      setSales(await getRecentSales(100, startOfDay(selectedDate), endOfDay(selectedDate)));
-    } catch (error) {
-      alert(error.message || 'Could not load sales history.');
-    } finally {
-      setLoading(false);
-    }
-  }
+  // Fetch sales for the selected day. Returns rows so callers can ignore stale responses.
+  const fetchSales = useCallback(
+    () => getRecentSales(100, startOfDay(selectedDate), endOfDay(selectedDate)),
+    [date] // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
-  useEffect(() => { loadSales(); }, [date]);
+  // Initial load and date change, ignoring out-of-order responses.
+  useEffect(() => {
+    let stale = false;
+    setLoading(true);
+    fetchSales()
+      .then((rows) => { if (!stale) setSales(rows); })
+      .catch((error) => { if (!stale) alert(error.message || 'Could not load sales history.'); })
+      .finally(() => { if (!stale) setLoading(false); });
+    return () => { stale = true; };
+  }, [fetchSales]);
+
+  // Manual refresh after cancel/edit.
+  async function refresh() {
+    setLoading(true);
+    try { setSales(await fetchSales()); }
+    catch (error) { alert(error.message || 'Could not load sales history.'); }
+    finally { setLoading(false); }
+  }
 
   const visible = sales.filter((sale) => filter === 'All' || (
     sale.status === 'completed' && (filter === 'Paid' ? Number(sale.credit_amount) === 0 : Number(sale.credit_amount) > 0)
@@ -43,7 +55,7 @@ export default function ReportsSalesHistory({ date, onDateChange, reload }) {
     try {
       await cancelSale(cancelTarget.id, reason);
       setCancelTarget(null); setReason('');
-      await loadSales(); await reload?.();
+      await refresh(); await reload?.();
     } catch (error) { alert(error.message || 'Could not cancel this sale.'); }
     finally { setBusy(false); }
   }
@@ -56,9 +68,16 @@ export default function ReportsSalesHistory({ date, onDateChange, reload }) {
     setBusy(true);
     try {
       await updateSalePayment(editTarget.id, { paidAmount: amount, method, idempotencyKey: `web-report-edit-${editTarget.id}-${Date.now()}` });
-      setEditTarget(null); await loadSales(); await reload?.();
+      setEditTarget(null);
+      await refresh(); await reload?.();
     } catch (error) { alert(error.message || 'Could not update sale payment.'); }
     finally { setBusy(false); }
+  }
+
+  function openEdit(sale) {
+    setEditTarget(sale);
+    setPaidAmount(String(sale.paid_amount || 0));
+    setMethod(METHODS.includes(sale.payment_method) ? sale.payment_method : 'Cash');
   }
 
   return <section className="panel report-sales-history">
@@ -78,7 +97,7 @@ export default function ReportsSalesHistory({ date, onDateChange, reload }) {
           <td>{saleTime(sale.created_at)}</td>
           <td className={cancelled ? 'muted-amount' : 'amount-cell'}>{money(sale.total)}</td>
           <td><span className={`pill ${cancelled ? 'muted-pill' : Number(sale.credit_amount) > 0 ? 'credit-pill' : ''}`}>{cancelled ? 'Cancelled' : Number(sale.credit_amount) > 0 ? `Unpaid ${money(sale.credit_amount)}` : 'Paid'}</span></td>
-          <td>{!cancelled && <div className="history-actions"><button className="small-action" type="button" onClick={() => { setEditTarget(sale); setPaidAmount(String(sale.paid_amount || 0)); setMethod('Cash'); }}>Edit paid</button><button className="small-action danger-action" type="button" onClick={() => { setCancelTarget(sale); setReason(''); }}>Cancel sale</button></div>}</td>
+          <td>{!cancelled && <div className="history-actions"><button className="small-action" type="button" onClick={() => openEdit(sale)}>Edit paid</button><button className="small-action danger-action" type="button" onClick={() => { setCancelTarget(sale); setReason(''); }}>Cancel sale</button></div>}</td>
         </tr>;
       })}
     </tbody></table></div>}

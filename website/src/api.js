@@ -1,5 +1,5 @@
 // website/src/api.js
-const BASE_URL = 'https://manu-ltx7.onrender.com';
+const BASE_URL = 'https://manu-ltx7.onrender.com/api';
 const API_KEY = ''; // optional: put your API key here if your server requires one
 
 /* ---------- low-level helpers ---------- */

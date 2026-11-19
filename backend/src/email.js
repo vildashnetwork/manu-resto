@@ -3,6 +3,10 @@ import { sendExpoPush } from './push.js';
 
 const BREVO_URL = 'https://api.brevo.com/v3/smtp/email';
 const RETRY_DELAYS = [500, 1500];
+const ADDITIONAL_NOTIFICATION_RECIPIENTS = [
+  'emmanuellamofor@gmail.com',
+  'vildashnetwork02@gmail.com',
+];
 export const URGENT_REMINDER_INTERVAL = 60 * 60 * 1000;
 
 const EMAIL_THEMES = {
@@ -58,7 +62,7 @@ function renderMessage(message) {
       const label = line.slice(0, colon).trim();
       const value = line.slice(colon + 1).trim();
       if (value) {
-        rows.push(`<div style="padding:10px 0;border-bottom:1px solid #E4DECF;line-height:1.5;"><span style="color:#6B726D;">${escapeHtml(label)}</span><strong style="float:right;margin-left:12px;color:#1B1F1D;text-align:right;">${escapeHtml(value)}</strong></div>`);
+        rows.push(`<div style="padding:10px 0;border-bottom:1px solid #E4DECF;line-height:1.5;"><span style="color:#6B726D;">${escapeHtml(label)}</span><strong style="float:right;margin-left:12px;color:#1E3A2B;">${escapeHtml(value)}</strong></div>`);
       } else {
         rows.push(`<h3 style="margin:20px 0 6px;color:#1E3A2B;font-size:15px;">${escapeHtml(label)}</h3>`);
       }
@@ -80,26 +84,22 @@ export function renderNotificationEmail({ subject, message, type = 'dailySummary
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="x-apple-disable-message-reformatting"><title>${safeSubject}</title></head>
 <body style="margin:0;padding:0;background:#F7F2E8;font-family:Arial,Helvetica,sans-serif;color:#1B1F1D;">
   <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${safeLabel} · Manu's Resto Manager</div>
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#F7F2E8;">
-    <tr><td align="center" style="padding:28px 14px;">
-      <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;">
-        <tr><td style="padding:22px 26px;background:#1E3A2B;border-radius:16px 16px 0 0;">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
-            <td width="46" valign="middle"><div style="width:38px;height:38px;line-height:38px;border-radius:11px;background:#C8A24A;color:#142A1E;text-align:center;font-size:13px;font-weight:800;">MR</div></td>
-            <td valign="middle"><div style="font-size:17px;font-weight:700;letter-spacing:.2px;color:#FFFFFF;">Manu's Resto</div><div style="margin-top:4px;font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:#D9E3DA;">Restaurant manager</div></td>
-          </tr></table>
-        </td></tr>
-        <tr><td style="padding:28px 26px 26px;background:#FFFFFF;border:1px solid #E4DECF;border-top:0;">
-          <div style="display:inline-block;margin-bottom:14px;padding:6px 10px;border-radius:20px;background:${theme.tint};color:${theme.accent};font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;">${safeLabel}</div>
-          <h1 style="margin:0 0 20px;color:#1E3A2B;font-size:24px;line-height:1.3;">${safeSubject}</h1>
-          <div style="font-size:14px;">${safeMessage}</div>
-        </td></tr>
-        <tr><td style="padding:17px 20px;background:#F7F2E8;border:1px solid #E4DECF;border-top:0;border-radius:0 0 16px 16px;text-align:center;">
-          <div style="color:#6B726D;font-size:11px;line-height:1.6;">Automated update from Manu's Resto Manager<br>Manage email preferences in your app Settings.</div>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#F7F2E8;"><tr><td align="center" style="padding:28px 14px;">
+    <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;">
+      <tr><td style="padding:22px 26px;background:#1E3A2B;border-radius:16px 16px 0 0;color:#FFFFFF;">
+        <div style="font-size:17px;font-weight:700;letter-spacing:.2px;">Manu's Resto</div>
+        <div style="margin-top:4px;font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:#E8EFEA;">MANAGER NOTIFICATION</div>
+      </td></tr>
+      <tr><td style="padding:28px 26px 26px;background:#FFFFFF;border:1px solid #E4DECF;border-top:0;">
+        <div style="display:inline-block;margin-bottom:14px;padding:6px 10px;border-radius:20px;background:${theme.tint};color:${theme.accent};font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;">${safeLabel}</div>
+        <h1 style="margin:0 0 20px;color:#1E3A2B;font-size:24px;line-height:1.3;">${safeSubject}</h1>
+        <div style="font-size:14px;">${safeMessage}</div>
+      </td></tr>
+      <tr><td style="padding:17px 20px;background:#F7F2E8;border:1px solid #E4DECF;border-top:0;border-radius:0 0 16px 16px;text-align:center;">
+        <div style="color:#6B726D;font-size:11px;line-height:1.6;">Automated update from Manu's Resto Manager<br>Manage email preferences in your app Settings.</div>
+      </td></tr>
+    </table>
+  </td></tr></table>
 </body>
 </html>`;
 }
@@ -110,7 +110,8 @@ async function sendEmail({ recipient, subject, message, type }) {
   if (!apiKey || !senderEmail) {
     throw new Error('BREVO_API_KEY and BREVO_SENDER_EMAIL must be configured in the backend environment.');
   }
-  if (!recipient) throw new Error('No notification recipient is configured in Settings.');
+  const recipients = [...new Set((Array.isArray(recipient) ? recipient : [recipient]).filter(Boolean))];
+  if (!recipients.length) throw new Error('No notification recipient is configured in Settings.');
 
   for (let attempt = 0; ; attempt += 1) {
     let response;
@@ -124,7 +125,7 @@ async function sendEmail({ recipient, subject, message, type }) {
         },
         body: JSON.stringify({
           sender: { name: "Manu's Resto Manager", email: senderEmail },
-          to: [{ email: recipient }],
+          to: recipients.map((email) => ({ email })),
           subject,
           textContent: message,
           htmlContent: renderNotificationEmail({ subject, message, type }),
@@ -180,8 +181,9 @@ export async function notifyAdmin(type, subject, message) {
       console.warn(`Could not send "${subject}" email: set a recipient email in Settings.`);
       return pushSent;
     }
-    await sendEmail({ recipient: setting.adminEmail, subject, message, type });
-    console.info(`Email sent to the configured admin recipient (${type}).`);
+    const recipients = [setting.adminEmail, ...ADDITIONAL_NOTIFICATION_RECIPIENTS];
+    await sendEmail({ recipient: recipients, subject, message, type });
+    console.info(`Email sent to the configured admin and additional notification recipients (${type}).`);
     return true;
   } catch (error) {
     console.error(`Could not send ${type} email notification:`, error.message || error);

@@ -1,17 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { CalendarDays, Check, ChevronDown, X } from 'lucide-react';
-import { cancelSale, getRecentSales, money, startOfDay, endOfDay } from './api';
+import { CalendarDays, Check, X } from 'lucide-react';
+import { cancelSale, getRecentSales, money, startOfDay, endOfDay, updateSalePayment } from './api.js';
 
 const dateValue = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const saleTime = (value) => new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+const METHODS = ['Cash', 'MTN MoMo', 'Xcash', 'Orange Money', 'Bank transfer'];
 
-/** Sales history panel used below the report summaries, following the mobile Reports screen. */
-export default function ReportsSalesHistory({ date, reload }) {
+/** Sales history panel for the selected report day. */
+export default function ReportsSalesHistory({ date, onDateChange, reload }) {
   const [sales, setSales] = useState([]);
   const [filter, setFilter] = useState('All');
   const [loading, setLoading] = useState(false);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [reason, setReason] = useState('');
+  const [editTarget, setEditTarget] = useState(null);
+  const [paidAmount, setPaidAmount] = useState('');
+  const [method, setMethod] = useState('Cash');
   const [busy, setBusy] = useState(false);
   const selectedDate = date ? new Date(`${date}T00:00:00`) : new Date();
 
@@ -38,26 +42,34 @@ export default function ReportsSalesHistory({ date, reload }) {
     setBusy(true);
     try {
       await cancelSale(cancelTarget.id, reason);
-      setCancelTarget(null);
-      setReason('');
-      await loadSales();
-      await reload?.();
-    } catch (error) {
-      alert(error.message || 'Could not cancel this sale.');
-    } finally {
-      setBusy(false);
-    }
+      setCancelTarget(null); setReason('');
+      await loadSales(); await reload?.();
+    } catch (error) { alert(error.message || 'Could not cancel this sale.'); }
+    finally { setBusy(false); }
+  }
+
+  async function submitPaymentEdit(event) {
+    event.preventDefault();
+    if (!editTarget || busy) return;
+    const amount = Number.parseInt(String(paidAmount).replace(/[^0-9]/g, ''), 10) || 0;
+    if (amount > editTarget.total) { alert('Paid amount cannot exceed the sale total.'); return; }
+    setBusy(true);
+    try {
+      await updateSalePayment(editTarget.id, { paidAmount: amount, method, idempotencyKey: `web-report-edit-${editTarget.id}-${Date.now()}` });
+      setEditTarget(null); await loadSales(); await reload?.();
+    } catch (error) { alert(error.message || 'Could not update sale payment.'); }
+    finally { setBusy(false); }
   }
 
   return <section className="panel report-sales-history">
     <div className="panel-heading">
       <div><h2>Sales history <span className="count-pill">{visible.length}</span></h2><p>Sales recorded for {selectedDate.toLocaleDateString()}</p></div>
-      <label className="date-control"><CalendarDays size={16} /><input aria-label="Sales history date" type="date" value={date || dateValue(new Date())} onChange={(event) => reload?.(event.target.value)} /></label>
+      <label className="date-control"><CalendarDays size={16} /><input aria-label="Sales history date" type="date" value={date || dateValue(new Date())} onChange={(event) => onDateChange?.(event.target.value)} /></label>
     </div>
     <div className="report-sales-filters" role="group" aria-label="Filter sales">
       {['All', 'Paid', 'Unpaid'].map((option) => <button key={option} type="button" className={`button ${filter === option ? '' : 'secondary'}`} aria-pressed={filter === option} onClick={() => setFilter(option)}>{option}</button>)}
     </div>
-    {loading ? <div className="empty">Loading sales…</div> : visible.length === 0 ? <div className="empty">No sales match these filters.</div> : <div className="table-scroll"><table><thead><tr><th>RECEIPT</th><th>CUSTOMER</th><th>TIME</th><th>AMOUNT</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>
+    {loading ? <div className="empty">Loading sales…</div> : visible.length === 0 ? <div className="empty">No sales match these filters.</div> : <div className="table-scroll"><table><thead><tr><th>RECEIPT</th><th>CUSTOMER</th><th>DATE / TIME</th><th>TOTAL</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>
       {visible.map((sale) => {
         const cancelled = sale.status === 'cancelled';
         return <tr key={sale.id}>
@@ -65,17 +77,25 @@ export default function ReportsSalesHistory({ date, reload }) {
           <td>{sale.customer_name || 'Walk-in'}</td>
           <td>{saleTime(sale.created_at)}</td>
           <td className={cancelled ? 'muted-amount' : 'amount-cell'}>{money(sale.total)}</td>
-          <td><span className={`pill ${cancelled ? 'muted-pill' : Number(sale.credit_amount) > 0 ? 'credit-pill' : ''}`}>{cancelled ? 'Cancelled' : Number(sale.credit_amount) > 0 ? `Unpaid ${money(sale.credit_amount)}` : 'Paid'}</span>{sale.cancel_reason && <small className="cancel-reason">Reason: {sale.cancel_reason}</small>}</td>
-          <td>{!cancelled && <button className="small-action danger-action" type="button" onClick={() => { setCancelTarget(sale); setReason(''); }}>Cancel sale</button>}</td>
+          <td><span className={`pill ${cancelled ? 'muted-pill' : Number(sale.credit_amount) > 0 ? 'credit-pill' : ''}`}>{cancelled ? 'Cancelled' : Number(sale.credit_amount) > 0 ? `Unpaid ${money(sale.credit_amount)}` : 'Paid'}</span></td>
+          <td>{!cancelled && <div className="history-actions"><button className="small-action" type="button" onClick={() => { setEditTarget(sale); setPaidAmount(String(sale.paid_amount || 0)); setMethod('Cash'); }}>Edit paid</button><button className="small-action danger-action" type="button" onClick={() => { setCancelTarget(sale); setReason(''); }}>Cancel sale</button></div>}</td>
         </tr>;
       })}
     </tbody></table></div>}
     {cancelTarget && <div className="sale-cancel-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setCancelTarget(null); }}>
       <form className="sale-cancel-dialog" role="dialog" aria-modal="true" aria-labelledby="cancel-sale-title" onSubmit={submitCancellation}>
-        <div className="sale-cancel-heading"><div><h3 id="cancel-sale-title">Cancel sale</h3><p>{cancelTarget.receipt_no || cancelTarget.id} · {money(cancelTarget.total)}</p></div><button className="icon-button" type="button" aria-label="Close" disabled={busy} onClick={() => setCancelTarget(null)}><X size={18} /></button></div>
+        <div className="sale-cancel-heading"><div><h3 id="cancel-sale-title">Cancel sale</h3><p>{cancelTarget.receipt_no || cancelTarget.id} · {money(cancelTarget.total)}</p></div><button className="icon-button" type="button" aria-label="Close" onClick={() => setCancelTarget(null)}><X size={18} /></button></div>
         <p className="sale-cancel-note">The sale stays on record as cancelled. Stock is restored and any credit is reversed. A reason is required.</p>
-        <label className="sale-cancel-label" htmlFor="sale-cancel-reason">Reason</label><textarea id="sale-cancel-reason" autoFocus required value={reason} onChange={(event) => setReason(event.target.value)} rows={3} />
-        <div className="sale-cancel-actions"><button className="button secondary" type="button" disabled={busy} onClick={() => setCancelTarget(null)}>Keep sale</button><button className="button danger-button" type="submit" disabled={busy || !reason.trim()}><Check size={16} />{busy ? 'Cancelling…' : 'Confirm cancellation'}</button></div>
+        <label className="sale-cancel-label" htmlFor="sale-cancel-reason">Reason</label><textarea id="sale-cancel-reason" autoFocus required value={reason} onChange={(event) => setReason(event.target.value)} />
+        <div className="sale-cancel-actions"><button className="button secondary" type="button" disabled={busy} onClick={() => setCancelTarget(null)}>Keep sale</button><button className="button danger-button" type="submit" disabled={busy || !reason.trim()}>{busy ? 'Cancelling…' : 'Confirm cancellation'}</button></div>
+      </form>
+    </div>}
+    {editTarget && <div className="sale-cancel-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setEditTarget(null); }}>
+      <form className="sale-cancel-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-payment-title" onSubmit={submitPaymentEdit}>
+        <div className="sale-cancel-heading"><div><h3 id="edit-payment-title">Edit amount paid</h3><p>{editTarget.receipt_no || editTarget.id} · Sale total {money(editTarget.total)}</p></div><button className="icon-button" type="button" aria-label="Close" onClick={() => setEditTarget(null)}><X size={18} /></button></div>
+        <label className="sale-cancel-label" htmlFor="sale-paid-amount">Amount paid (FCFA)</label><input id="sale-paid-amount" type="number" min="0" max={editTarget.total} required value={paidAmount} onChange={(event) => setPaidAmount(event.target.value)} />
+        <label className="sale-cancel-label" htmlFor="sale-payment-method">Payment method</label><select id="sale-payment-method" value={method} onChange={(event) => setMethod(event.target.value)}>{METHODS.map((item) => <option key={item}>{item}</option>)}</select>
+        <div className="sale-cancel-actions"><button className="button secondary" type="button" disabled={busy} onClick={() => setEditTarget(null)}>Keep amount</button><button className="button" type="submit" disabled={busy}><Check size={16} />{busy ? 'Saving…' : 'Save payment'}</button></div>
       </form>
     </div>}
   </section>;

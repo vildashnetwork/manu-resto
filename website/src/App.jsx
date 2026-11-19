@@ -1,19 +1,19 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  AlertCircle, BarChart3, Bell, Boxes, CalendarDays, Check, CheckCircle2,
-  ChevronRight, CircleDollarSign, CreditCard, Home, LogOut, Menu, Plus,
+  AlertCircle, BarChart3, Bell, Boxes, Check, CheckCircle2,
+  ChevronRight, CircleDollarSign, CreditCard, Home as HomeIcon, LogOut, Menu, Plus,
   RefreshCw, Search, Settings as SettingsIcon, ShoppingCart, Users,
   UtensilsCrossed, Wallet, X,
 } from 'lucide-react';
 import {
-  addExpense, addStockMovement, cancelSale, createCustomer, createSale,
+  addStockMovement, createCustomer, createSale,
   endOfDay, getCustomers, getProducts, getRecentSales, getReport, getSettings,
   money, recordRepayment, startOfDay, updateSettings, sendTestEmail,
 } from './api.js';
-import ReportsSalesHistory from './ReportsSalesHistory.jsx';
+import Reports from './Reports.jsx';
 
 const PAGES = [
-  { id: 'Home', icon: Home }, { id: 'Sales', icon: ShoppingCart },
+  { id: 'Home', icon: HomeIcon }, { id: 'Sales', icon: ShoppingCart },
   { id: 'Customers', icon: Users }, { id: 'Stock', icon: Boxes },
   { id: 'Reports', icon: BarChart3 }, { id: 'Settings', icon: SettingsIcon },
 ];
@@ -37,7 +37,6 @@ const NOTIFICATIONS = [
 const METHODS = ['Cash', 'MTN MoMo', 'Xcash', 'Orange Money', 'Bank transfer'];
 const uid = () => globalThis.crypto?.randomUUID?.() || `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const initials = (name = '') => name.split(/\s+/).slice(0, 2).map((part) => part[0] || '').join('').toUpperCase() || 'W';
-const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const readAmount = (value) => Number.parseInt(String(value || '').replace(/[^0-9]/g, ''), 10) || 0;
 
 function Brand() {
@@ -99,42 +98,9 @@ function Stock({ data, reload }) {
   const tracked = data.products.filter((product) => product.tracked); const low = tracked.filter((product) => product.low_stock_threshold > 0 && product.stock <= product.low_stock_threshold);
   return <><PageTitle eyebrow="MENU AND INVENTORY" title="Stock"><Button secondary onClick={reload}><RefreshCw size={16} /> Refresh stock</Button></PageTitle><div className="stats-grid compact"><Stat title="Products" value={data.products.length} note="Menu items" icon={Boxes} /><Stat title="Tracked stock" value={tracked.length} note="Inventory-tracked items" icon={Wallet} tone="blue" /><Stat title="Low stock" value={low.length} note="At or below configured threshold" icon={AlertCircle} tone="rose" /></div><section className="panel list-panel"><div className="panel-heading"><div><h2>Inventory</h2><p>Manage quantities using the stock movement API</p></div><div className="filters"><label className="search"><Search size={16} /><input placeholder="Search product or barcode" value={query} onChange={(event) => setQuery(event.target.value)} /></label><select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select></div></div><div className="table-scroll"><table><thead><tr><th>PRODUCT</th><th>CATEGORY</th><th>PRICE</th><th>QUANTITY</th><th>STATUS</th><th /></tr></thead><tbody>{products.map((product) => { const isLow = product.tracked && product.low_stock_threshold > 0 && product.stock <= product.low_stock_threshold; return <tr key={product.id}><td><span className="customer-name">{product.image_url ? <img className="product-thumb" src={product.image_url} alt="" /> : <i><UtensilsCrossed size={15} /></i>}{product.name}</span></td><td>{product.category}</td><td>{money(product.price)}</td><td>{product.tracked ? `${product.stock} ${product.unit || ''}` : 'Not tracked'}</td><td><span className={`pill ${isLow ? 'credit-pill' : ''}`}>{product.tracked ? isLow ? 'Low stock' : 'In stock' : 'Not tracked'}</span></td><td>{product.tracked && <button className="small-action" onClick={() => adjust(product)}>Add stock</button>}</td></tr>; })}</tbody></table></div>{!products.length && <div className="empty">No products found.</div>}</section></>;
 }
-function Reports({ data, reload }) {
-  const [date, setDate] = useState(localDate()); const [busy, setBusy] = useState(false); const [report, setReport] = useState(null);
-  const selected = new Date(`${date}T00:00:00`);
-  const loadReport = useCallback(async () => { const from = startOfDay(selected); const to = endOfDay(selected); setBusy(true); try { setReport(await getReport(from, to)); } catch (error) { alert(error.message || 'Could not load report.'); } finally { setBusy(false); } }, [date]);
-  useEffect(() => { loadReport(); }, [loadReport]);
-  const r = report || data.report || {};
-  async function expense() { const amount = readAmount(prompt('Expense amount (FCFA)')); if (!(amount > 0)) return; const category = prompt('Expense category', 'Supplies') || 'Other'; try { await addExpense({ category, amount, method: 'Cash' }); await loadReport(); await reload(); } catch (error) { alert(error.message); } }
-  return <><PageTitle eyebrow="BUSINESS SUMMARY" title="Reports"><label className="date-control"><CalendarDays size={16} /><input aria-label="Report date" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label><Button secondary onClick={() => window.print()}>Print report</Button><Button onClick={expense} disabled={busy}><Plus size={16} /> Add expense</Button></PageTitle><section className="hero report-hero"><div><div className="hero-eyebrow">TOTAL SALES · {r.salesCount || 0} ORDERS</div><strong>{money(r.totalSales)}</strong><div className="hero-metrics"><span><small>Collected</small><b>{money(r.cashFromSales)}</b></span><span><small>On credit</small><b>{money(r.creditSales)}</b></span><span><small>Expenses</small><b>{money(r.expenses)}</b></span></div></div><span className="hero-mark">✳</span></section><div className="stats-grid"><Stat title="Debt recovered" value={money(r.debtRecovered)} note="Repayments received" icon={Wallet} /><Stat title="Net cash movement" value={money(r.netCashMovement)} note="Cash in less expenses" icon={CircleDollarSign} /><Stat title="Gross profit (est.)" value={money(r.grossProfitEstimate)} note="Estimated from product costs" icon={BarChart3} tone="blue" /><Stat title="Owed to you" value={money(r.outstandingDebt)} note={`${r.debtorCount || 0} customers with balances`} icon={CreditCard} tone="rose" /></div><section className="panel report-breakdown"><div className="panel-heading"><div><h2>By payment method</h2><p>Sales and repayments, separately</p></div></div>{(r.byMethod || []).length ? <div className="method-list">{r.byMethod.map((item) => <div className="method-row" key={item.method}><b>{item.method}</b><span>Sales {money(item.sales)} · Repayments {money(item.repayments)}</span><strong>{money(item.sales + item.repayments)}</strong></div>)}</div> : <div className="empty">No payments in this period.</div>}</section><section className="panel report-breakdown"><div className="panel-heading"><div><h2>Best sellers</h2><p>Products sold in the selected day</p></div></div>{(r.topProducts || []).length ? <div className="method-list">{r.topProducts.map((item, index) => <div className="method-row" key={item.name}><b>{index + 1}. {item.name}</b><span>{item.qty} sold</span><strong>{money(item.revenue)}</strong></div>)}</div> : <div className="empty">No sales in this period.</div>}</section><section className="panel report-breakdown"><div className="panel-heading"><div><h2>Expenses</h2><p>Expenses recorded on the selected day</p></div></div>{(r.expList || []).length ? <div className="method-list">{r.expList.map((item) => <div className="method-row" key={item.id}><b>{item.category}</b><span>{item.method}{item.note ? ` · ${item.note}` : ''}</span><strong>−{money(item.amount)}</strong></div>)}</div> : <div className="empty">No expenses in this period.</div>}</section><ReportsSalesHistory date={date} onDateChange={setDate} reload={reload} /></>;
-}
 function Settings({ data, reload }) {
   const [email, setEmail] = useState(data.settings?.adminEmail || ''); const [notifications, setNotifications] = useState({ ...DEFAULT_NOTIFICATIONS, ...(data.settings?.notifications || {}) }); const [busy, setBusy] = useState(false);
   useEffect(() => { if (data.settings) { setEmail(data.settings.adminEmail || ''); setNotifications({ ...DEFAULT_NOTIFICATIONS, ...data.settings.notifications }); } }, [data.settings]);
   async function save() { setBusy(true); try { await updateSettings({ adminEmail: email.trim(), notifications }); await reload(); alert('Notification settings saved.'); } catch (error) { alert(error.message); } finally { setBusy(false); } }
   async function test() { setBusy(true); try { const result = await sendTestEmail(); alert(`Test email sent to ${result.recipient}.`); } catch (error) { alert(error.message); } finally { setBusy(false); } }
-  return <><PageTitle eyebrow="WORKSPACE PREFERENCES" title="Settings"><Button secondary onClick={test} disabled={busy}><Bell size={16} /> Send test email</Button><Button onClick={save} disabled={busy}><Check size={16} /> Save settings</Button></PageTitle><section className="panel settings-panel"><h2>Admin email</h2><p>This address receives the email notifications enabled below.</p><label className="settings-email">Notification email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="admin@example.com" /></label><div className="notification-list">{NOTIFICATIONS.map(([key, title, detail]) => <label className="notification-option" key={key}><span><b>{title}</b><small>{detail}</small></span><input type="checkbox" checked={Boolean(notifications[key])} onChange={(event) => setNotifications((current) => ({ ...current, [key]: event.target.checked }))} /></label>)}</div><small className="settings-note">Email sender and push delivery are configured by the backend.</small></section></>;
-}
-function App() {
-  const [auth, setAuth] = useState(() => sessionStorage.getItem('manu-resto-auth') === 'true');
-  const [page, setPage] = useState('Home'); const [drawer, setDrawer] = useState(false);
-  const [data, setData] = useState({ products: [], customers: [], sales: [], report: null, settings: null });
-  const [loading, setLoading] = useState(false); const [error, setError] = useState('');
-  const load = useCallback(async () => {
-    if (!auth) return;
-    setLoading(true); setError('');
-    try {
-      const from = startOfDay(); const to = endOfDay();
-      const [products, customers, sales, report, settings] = await Promise.all([getProducts(), getCustomers(), getRecentSales(100, from, to), getReport(from, to), getSettings()]);
-      setData({ products, customers, sales, report, settings });
-    } catch (e) { setError(e.message || 'Could not load data from the restaurant API.'); }
-    finally { setLoading(false); }
-  }, [auth]);
-  useEffect(() => { load(); }, [load]);
-  function login() { sessionStorage.setItem('manu-resto-auth', 'true'); setAuth(true); }
-  function logout() { sessionStorage.removeItem('manu-resto-auth'); setAuth(false); }
-  const navigate = (next) => { setPage(next); setDrawer(false); };
-  if (!auth) return <Login onLogin={login} />;
-  return <div className="app-shell"><aside className={`sidebar ${drawer ? 'open' : ''}`}><div className="side-brand"><Brand /><button className="close-nav icon-button" onClick={() => setDrawer(false)} aria-label="Close navigation"><X size={20} /></button></div><div className="workspace-badge"><span>M</span><div><b>Manu's Restaurant</b><small>Connected workspace</small></div></div><div className="nav-label">WORKSPACE</div><nav>{PAGES.map(({ id, icon: Icon }) => <button key={id} onClick={() => navigate(id)} className={`nav-link ${page === id ? 'active' : ''}`}><Icon size={18} />{id}{id === 'Stock' && data.products.some((product) => product.tracked && product.low_stock_threshold > 0 && product.stock <= product.low_stock_threshold) && <i className="nav-dot" />}</button>)}</nav><div className="side-bottom"><button className="nav-link" onClick={load}><RefreshCw size={18} />Refresh data</button><button className="nav-link" onClick={logout}><LogOut size={18} />Sign out</button><div className="profile"><i>MM</i><span><b>Manu Manager</b><small>Administrator</small></span></div></div></aside>{drawer && <button className="scrim" onClick={() => setDrawer(false)} aria-label="Close navigation" />}<div className="main-column"><header className="topbar"><div className="crumb"><button className="menu-button icon-button" onClick={() => setDrawer(true)} aria-label="Open navigation"><Menu size={21} /></button><span>Workspace</span><ChevronRight size={14} /><b>{page}</b></div><div className="top-actions"><span className={error ? 'connection offline' : 'connection'}><i />{error ? 'API unavailable' : 'Live API'}</span><button className="icon-button" onClick={load} title="Refresh"><RefreshCw size={17} /></button></div></header><main className="content">{error && <div className="error-banner"><AlertCircle size={18} /><span>{error} Check the API URL/CORS configuration, then retry.</span><button onClick={load}>Retry</button></div>}{loading && !data.report ? <div className="loading-card">Connecting to Manu's Resto API…</div> : null}{page === 'Home' && <Home data={data} navigate={navigate} loading={loading} />}{page === 'Sales' && <Sales data={data} reload={load} />}{page === 'Customers' && <Customers data={data} reload={load} />}{page === 'Stock' && <Stock data={data} reload={load} />}{page === 'Reports' && <Reports data={data} reload={load} />}{page === 'Settings' && <Settings data={data} reload={load} />}</main><footer className="footer"><span>© 2026 Manu's Resto <i>✳</i> Connected to restaurant API</span><span>Help · Privacy</span></footer></div><nav className="bottom-nav" aria-label="Main navigation">{PAGES.filter((item) => item.id !== 'Settings').map(({ id, icon: Icon }) => <button key={id} onClick={() => navigate(id)} className={page === id ? 'selected' : ''}><Icon size={20} /><span>{id}</span></button>)}</nav></div>;
-}
-export default App;
+  return <><PageTitle eyebrow="WORKSPACE PREFERENCES" title="Settings"><Button secondary onClick={test} disabled={busy}><Bell size={16} /> Send test email</Button><Button onClick={save} disabled={busy}><Check size={16} /> Save settings</Button></PageTitle><section className="panel settings-panel"><h2>Admin email</h2><p>This address receives the email notifications enabled below.</p><label className="settings-email">Notification email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="admin@example.com" /></label><div className="notification-list">{NOTIFICATIONS.map(([key, title, detail]) => <label className="notification-option" key={key}><span><b>{title}</b><small>{detail}</small></span><input type="checkbox" checked={Boolean(notifications[key])} onChange={(event) => setNotifications((current) => ({ ...current, [key]: event.target.checked }))} /></la

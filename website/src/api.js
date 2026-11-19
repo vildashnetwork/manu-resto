@@ -265,4 +265,4 @@ export async function updateSaleDate(saleId, createdAt) {
   if (!createdAt) throw new Error('A date is required');
   const payload = await put(`/sales/${encodeURIComponent(saleId)}/date`, { createdAt });
   return normalizeSale(entity(payload, 'sale'));
-    }
+}

@@ -27,7 +27,10 @@ async function request(method, path, { body, query } = {}) {
     try { payload = JSON.parse(text); } catch { payload = { message: text }; }
   }
   if (!response.ok) {
-    throw new Error(payload?.error || payload?.message || `Request failed (${response.status})`);
+    const error = new Error(payload?.error || payload?.message || `Request failed (${response.status})`);
+    error.code = payload?.code;       // e.g. 'CREDIT_LIMIT'
+    error.details = payload?.details; // e.g. { balance, limit, credit }
+    throw error;
   }
   return payload;
 }
@@ -35,6 +38,7 @@ async function request(method, path, { body, query } = {}) {
 const get = (path, query) => request('GET', path, { query });
 const post = (path, body = {}) => request('POST', path, { body });
 const put = (path, body = {}) => request('PUT', path, { body });
+const del = (path) => request('DELETE', path);
 
 /** Pull a single object out of common response shapes. */
 function entity(payload, key) {
@@ -87,6 +91,7 @@ function normalizeSale(raw = {}) {
     paid_amount: paid,
     credit_amount: num(raw.credit_amount ?? raw.creditAmount, Math.max(0, total - paid)),
     payment_method: raw.payment_method ?? raw.paymentMethod ?? raw.payments?.[0]?.method,
+    cancel_reason: raw.cancel_reason ?? raw.cancelReason ?? '',
     status: String(raw.status || 'completed').toLowerCase().replace('canceled', 'cancelled'),
   };
 }
@@ -120,6 +125,18 @@ function normalizeCustomer(raw = {}) {
   };
 }
 
+function normalizeExpense(raw = {}) {
+  return {
+    ...raw,
+    id: raw.id ?? raw._id,
+    category: raw.category ?? 'Other',
+    amount: num(raw.amount),
+    method: raw.method ?? 'Cash',
+    note: raw.note ?? '',
+    created_at: raw.created_at ?? raw.createdAt ?? raw.date,
+  };
+}
+
 function normalizeReport(raw = {}) {
   return {
     ...raw,
@@ -131,6 +148,16 @@ function normalizeReport(raw = {}) {
     outstandingDebt: num(raw.outstandingDebt),
     debtorCount: num(raw.debtorCount),
     expenses: num(raw.expenses),
+    netCashMovement: num(raw.netCashMovement),
+    grossProfitEstimate: num(raw.grossProfitEstimate),
+    expectedCash: num(raw.expectedCash),
+    byMethod: (raw.byMethod || []).map((m) => ({
+      method: m.method, sales: num(m.sales), repayments: num(m.repayments),
+    })),
+    topProducts: (raw.topProducts || []).map((p) => ({
+      name: p.name, qty: num(p.qty), revenue: num(p.revenue),
+    })),
+    expList: (raw.expList || []).map(normalizeExpense),
   };
 }
 
@@ -147,6 +174,11 @@ export async function getCustomers() {
 export async function getRecentSales(limit = 50, from, to) {
   const payload = await get('/sales', { limit, from, to });
   return list(payload, 'sales').map(normalizeSale);
+}
+
+/** Every sale in the period (used for the printed report). */
+export async function getAllSales(from, to) {
+  return getRecentSales(5000, from, to);
 }
 
 export async function getReport(from, to) {
@@ -167,10 +199,14 @@ export async function sendTestEmail(payload = {}) {
 
 /* ---------- writes ---------- */
 
-export async function createSale({ idempotencyKey, items, customerId = null, payments = [] }) {
+export async function createSale({
+  idempotencyKey, items, customerId = null, payments = [], createdAt, allowOverLimit = false,
+}) {
   if (!idempotencyKey) throw new Error('Idempotency key is required');
   if (!Array.isArray(items) || !items.length) throw new Error('Add at least one item');
-  return normalizeSale(entity(await post('/sales', { idempotencyKey, items, customerId, payments }), 'sale'));
+  const body = { idempotencyKey, items, customerId, payments, allowOverLimit };
+  if (createdAt) body.createdAt = createdAt;
+  return normalizeSale(entity(await post('/sales', body), 'sale'));
 }
 
 export async function createCustomer({ name, phone = '' }) {
@@ -192,9 +228,22 @@ export async function addStockMovement({ productId, type = 'purchase', qty, note
   return post('/stock-movements', { productId, type, qty, note });
 }
 
-export async function addExpense({ category = 'Other', amount, method = 'Cash', note = '' }) {
+export async function addExpense({ category = 'Other', amount, method = 'Cash', note = '', createdAt }) {
   if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('Expense must be a positive whole number');
-  return post('/expenses', { category, amount, method, note });
+  const body = { category, amount, method, note };
+  if (createdAt) body.createdAt = createdAt;
+  return post('/expenses', body);
+}
+
+export async function updateExpense(id, { category, amount, method, note = '', createdAt }) {
+  if (!id) throw new Error('Expense ID is required');
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('Expense must be a positive whole number');
+  return put(`/expenses/${encodeURIComponent(id)}`, { category, amount, method, note, createdAt });
+}
+
+export async function deleteExpense(id) {
+  if (!id) throw new Error('Expense ID is required');
+  return del(`/expenses/${encodeURIComponent(id)}`);
 }
 
 export async function cancelSale(saleId, reason) {
@@ -208,5 +257,12 @@ export async function updateSalePayment(saleId, { paidAmount, method, idempotenc
   if (!Number.isSafeInteger(paidAmount) || paidAmount < 0) throw new Error('Paid amount must be a non-negative whole number');
   if (!idempotencyKey) throw new Error('Idempotency key is required');
   const payload = await put(`/sales/${encodeURIComponent(saleId)}/payment`, { paidAmount, method, idempotencyKey });
+  return normalizeSale(entity(payload, 'sale'));
+}
+
+export async function updateSaleDate(saleId, createdAt) {
+  if (!saleId) throw new Error('Sale ID is required');
+  if (!createdAt) throw new Error('A date is required');
+  const payload = await put(`/sales/${encodeURIComponent(saleId)}/date`, { createdAt });
   return normalizeSale(entity(payload, 'sale'));
     }
